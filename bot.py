@@ -3,7 +3,10 @@ import re
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 from dotenv import load_dotenv
-from agent import SlackAIAgent
+# from agent import SlackAIAgent
+from enhanced_agent import EnhancedMarketingAgent
+from config import AI_MODEL_NAME, AI_TEMPERATURE
+from utils import clean_slack_formatting, format_slack_message
 
 # Load environment variables
 load_dotenv()
@@ -15,22 +18,22 @@ app = App(
 )
 
 # Initialize AI agent
-ai_agent = SlackAIAgent(
-    model_name="llama3:8b",
-    temperature=0.7
+
+
+ai_agent = EnhancedMarketingAgent(
+    model_name=AI_MODEL_NAME,
+    temperature=AI_TEMPERATURE
 )
 
-# ai_agent = SlackAIAgent(
-#     model_name="meta-llama/Llama-2-7b-chat-hf",
-#     temperature=0.7
-# )
+
+
 
 # Store bot user ID
 BOT_USER_ID = os.environ.get("BOT_USER_ID")
 
 
 def get_user_info(client, user_id: str) -> dict:
-    """Fetch user information from Slack"""
+    
     try:
         result = client.users_info(user=user_id)
         return result["user"]
@@ -40,7 +43,7 @@ def get_user_info(client, user_id: str) -> dict:
 
 
 def get_channel_info(client, channel_id: str) -> dict:
-    """Fetch channel information from Slack"""
+    
     try:
         result = client.conversations_info(channel=channel_id)
         return result["channel"]
@@ -49,17 +52,11 @@ def get_channel_info(client, channel_id: str) -> dict:
         return {}
 
 
-def extract_message_text(text: str, bot_user_id: str) -> str:
-    """Extract the actual message text by removing bot mentions"""
-    # Remove bot mention
-    mention_pattern = f"<@{bot_user_id}>"
-    cleaned_text = re.sub(mention_pattern, "", text).strip()
-    return cleaned_text
+
 
 
 @app.event("app_mention")
 def handle_mention(event, say, client):
-    """Handle when the bot is mentioned in a channel"""
     try:
         # Extract event data
         user_id = event["user"]
@@ -67,19 +64,16 @@ def handle_mention(event, say, client):
         text = event["text"]
         thread_ts = event.get("thread_ts", event["ts"])
         
-        # Show typing indicator
-        client.chat_postMessage(
-            channel=channel_id,
-            thread_ts=thread_ts,
-            text="Thinking... 🤔"
-        )
+        
         
         # Get context
         user_info = get_user_info(client, user_id)
         channel_info = get_channel_info(client, channel_id)
         
         # Extract clean message
-        message = extract_message_text(text, BOT_USER_ID)
+        message = clean_slack_formatting(text)
+
+       
         
         # Get AI response
         response = ai_agent.run(
@@ -88,14 +82,11 @@ def handle_mention(event, say, client):
             channel_info=channel_info
         )
         
-        # Delete typing indicator
-        # Note: In production, you'd want to store and delete the typing message
-        
-        # Send response in thread
         say(
-            text=response,
+            text=format_slack_message(response),
             thread_ts=thread_ts
         )
+
         
     except Exception as e:
         print(f"Error handling mention: {e}")
@@ -107,7 +98,7 @@ def handle_mention(event, say, client):
 
 @app.message("")
 def handle_direct_message(message, say, client):
-    """Handle direct messages to the bot"""
+    
     try:
         # Only respond to DMs (not channel messages)
         if message.get("channel_type") != "im":
@@ -120,11 +111,7 @@ def handle_direct_message(message, say, client):
         user_id = message["user"]
         text = message["text"]
         
-        # Show typing indicator
-        client.chat_postMessage(
-            channel=message["channel"],
-            text="Thinking... 🤔"
-        )
+        
         
         # Get user context
         user_info = get_user_info(client, user_id)
@@ -146,13 +133,13 @@ def handle_direct_message(message, say, client):
 
 @app.event("message")
 def handle_message_events(body, logger):
-    """Handle message events (required for message listener)"""
+   
     logger.debug(body)
 
 
-@app.command("/ai-help")
+@app.command("/sydney-help")
 def handle_help_command(ack, respond):
-    """Handle /ai-help slash command"""
+    
     ack()
     
     help_text = """
@@ -182,9 +169,9 @@ def handle_help_command(ack, respond):
 
 
 def main():
-    """Start the Slack bot"""
+    
     try:
-        # Validate environment variables
+        
         required_vars = [
             "SLACK_BOT_TOKEN",
             "SLACK_APP_TOKEN",
@@ -203,7 +190,7 @@ def main():
         print("🚀 Starting AI Marketing Manager Bot...")
         print(f"Bot User ID: {BOT_USER_ID}")
         
-        # Start the bot using Socket Mode
+        
         handler = SocketModeHandler(app, os.environ["SLACK_APP_TOKEN"])
         handler.start()
         

@@ -5,7 +5,7 @@ from langchain_community.chat_models import ChatOllama
 
 
 from langgraph.graph import StateGraph, END
-from langgraph.prebuilt import ToolExecutor
+
 import operator
 
 
@@ -21,7 +21,7 @@ class SlackAIAgent:
             raise ValueError("Ollama model name is missing")
 
         self.llm = ChatOllama(
-            model=model_name,        # 👈 THIS IS CRITICAL
+            model=model_name,       
             temperature=temperature
         )
 
@@ -68,8 +68,8 @@ class SlackAIAgent:
         messages = state["messages"]
         
         # Generate response
-        # response = self.llm.invoke(messages)
-        response = self.llm.invoke(messages[-1].content)
+        response = self.llm.invoke(messages)
+        # response = self.llm.invoke(messages[-1].content)
 
         
         return {
