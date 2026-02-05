@@ -5,7 +5,7 @@ from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, System
 from langchain_community.chat_models import ChatOllama
 from langgraph.graph import StateGraph, END
 from utils import parse_marketing_query
-from config import SYSTEM_PROMPTS
+from config import SYSTEM_PROMPTS , QUERY_HINTS
 
 
 class MarketingAgentState(TypedDict):
@@ -33,41 +33,41 @@ class EnhancedMarketingAgent:
         workflow.add_edge("generate_response", END)
 
         return workflow.compile()
-
-    def _generate_response(self,state: MarketingAgentState ) -> MarketingAgentState:
-
+    
+    def _generate_response(self, state: MarketingAgentState) -> MarketingAgentState:
         messages = state["messages"]
         user_info = state.get("user_info", {})
         channel_info = state.get("channel_info", {})
         query_type = state.get("query_type", "default")
         context = state.get("context", {})
 
+
+        keywords = context.get("keywords") or []
+        if not isinstance(keywords, list):
+            keywords = []
+
         user_name = user_info.get("real_name", "User")
         channel_name = channel_info.get("name", "channel")
 
-        # Get base prompt from config
-        base_prompt = SYSTEM_PROMPTS.get(
-            query_type,
-            SYSTEM_PROMPTS["default"]
-        )
+       
+        system_prompt = SYSTEM_PROMPTS.strip()
 
-        # Build final system prompt
-        system_prompt = f"""
-            {base_prompt}
+        query_hint = QUERY_HINTS.get(query_type)
+        if query_hint:
+            system_prompt += f"\n\n{query_hint.strip()}"
 
-            Context:
-            - User: {user_name}
-            - Channel: #{channel_name}
-            - Detected Intent: {query_type}
-            - Keywords: {", ".join(context.get("keywords", []))}
-            - Date: {datetime.now().strftime("%Y-%m-%d")}
+        
+        system_prompt += f"""
 
-            Response Guidelines:
-            - Be concise and actionable
-            - Use bullet points for clarity
-            - Provide practical marketing advice
-            - Ask clarifying questions if information is missing
-            """
+    Context:
+        - Keywords: {", ".join(keywords)}
+    """
+    # - User: {user_name}
+    # - Channel: #{channel_name}
+    # - Intent: {query_type}
+    
+    #  - Date: {datetime.now().strftime("%Y-%m-%d")}
+        system_prompt = system_prompt[:3000]
 
         llm_messages = [
             SystemMessage(content=system_prompt),
@@ -76,15 +76,32 @@ class EnhancedMarketingAgent:
 
         response = self.llm.invoke(llm_messages)
 
+        if not isinstance(response, AIMessage):
+            response = AIMessage(content=str(response))
+
         return {
             **state,
             "messages": [response]
         }
 
 
+
     def run(self, message: str, user_info: dict | None = None, channel_info: dict | None = None ) -> str:
 
         parsed = parse_marketing_query(message)
+
+        if isinstance(parsed, str):
+            parsed = {
+                "type": parsed,
+                "keywords": []
+            }
+
+        if not isinstance(parsed, dict):
+            parsed = {
+                "type": "default",
+                "keywords": []
+            }
+
 
         initial_state: MarketingAgentState = {
             "messages": [HumanMessage(content=message)],
@@ -108,7 +125,7 @@ class EnhancedMarketingAgent:
             return "I couldn't generate a response. Please try again."
 
         except Exception as e:
-            return (
-                "I ran into an error while processing your request. "
-                "Please try rephrasing your question."
-            )
+            import traceback
+            traceback.print_exc()
+            return f"DEBUG ERROR: {str(e)}"
+
