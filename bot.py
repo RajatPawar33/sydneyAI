@@ -1,11 +1,12 @@
 import os
+from pickle import TRUE
 import re
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 from dotenv import load_dotenv
 # from agent import SlackAIAgent
 from enhanced_agent import EnhancedMarketingAgent
-from config import AI_MODEL_NAME, AI_TEMPERATURE
+from config import AI_MODEL_NAME, AI_TEMPERATURE ,ENABLE_THREADING
 from utils import clean_slack_formatting, format_slack_message
 
 # Load environment variables
@@ -62,7 +63,8 @@ def handle_mention(event, say, client):
         user_id = event["user"]
         channel_id = event["channel"]
         text = event["text"]
-        thread_ts = event.get("thread_ts", event["ts"])
+
+        
         
         
         
@@ -73,7 +75,10 @@ def handle_mention(event, say, client):
         # Extract clean message
         message = clean_slack_formatting(text)
 
-       
+        client.chat_postMessage(
+            channel=channel_id,
+            text="Thinking... 🤔"
+        )
         
         # Get AI response
         response = ai_agent.run(
@@ -81,12 +86,16 @@ def handle_mention(event, say, client):
             user_info=user_info,
             channel_info=channel_info
         )
-        
-        say(
-            text=format_slack_message(response),
-            thread_ts=thread_ts
-        )
 
+        
+        payload = {
+            "text": format_slack_message(response)
+        }
+
+        if ENABLE_THREADING:
+            payload["thread_ts"] = event.get("thread_ts", event["ts"])
+
+        say(**payload)
         
     except Exception as e:
         print(f"Error handling mention: {e}")
