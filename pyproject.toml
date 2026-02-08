@@ -1,0 +1,23 @@
+[project]
+name = "sydneyai"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "aiosmtplib>=5.1.0",
+    "apscheduler>=3.11.2",
+    "dateparser>=1.3.0",
+    "httpx==0.26.0",
+    "langchain==0.1.9",
+    "langchain-community==0.0.29",
+    "langchain-openai>=0.1.7",
+    "langgraph==0.0.20",
+    "motor>=3.7.1",
+    "pydantic-settings>=2.12.0",
+    "pymongo>=4.16.0",
+    "python-dotenv==1.0.0",
+    "redis>=7.1.0",
+    "slack-bolt==1.18.0",
+    "slack-sdk==3.26.1",
+]
