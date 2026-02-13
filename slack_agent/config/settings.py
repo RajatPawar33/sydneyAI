@@ -37,6 +37,12 @@ class Settings(BaseSettings):
     mailgun_from_name: str = "Sydney Bot"
     mailgun_webhook_signing_key: Optional[str] = None
 
+    # youtube data api
+    youtube_api_key: Optional[str] = None
+
+    # apify (instagram discovery)
+    apify_api_token: Optional[str] = None
+
     # shopify config
     shopify_api_key: Optional[str] = None
     shopify_api_secret: Optional[str] = None
