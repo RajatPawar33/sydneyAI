@@ -10,7 +10,7 @@ from models.schemas import (
     SocialMediaPost,
 )
 from services.database import db_service
-from services.email import email_service
+from services.email import mailgun_client
 from services.scheduler import scheduler_service
 from services.shopify import shopify_service
 
@@ -99,19 +99,18 @@ class OutreachTool:
         return campaign_id
 
     async def _send_campaign(self, campaign_id: str):
-        # get campaign
+        # tag == campaign_id so webhook events and stats can be queried by it
         campaign = await db_service.get_campaign(campaign_id)
         if not campaign:
             return
 
         recipients = [EmailRecipient(**r) for r in campaign["recipients"]]
 
-        # send bulk emails
-        results = await email_service.send_bulk_emails(
+        results = await mailgun_client.send_bulk(
             recipients=recipients,
             subject=campaign["subject"],
             body_template=campaign["body"],
-            personalize=True,
+            tags=[campaign_id],
         )
 
         # update campaign status

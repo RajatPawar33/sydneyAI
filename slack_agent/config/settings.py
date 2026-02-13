@@ -28,14 +28,14 @@ class Settings(BaseSettings):
 
     # mongodb config
     mongodb_uri: str = "mongodb://localhost:27017"
-    mongodb_db_name: str = "slack_agent"
+    mongodb_db_name: str = "sydney"
 
-    # email config
-    smtp_host: str = "smtp.gmail.com"
-    smtp_port: int = 587
-    smtp_username: Optional[str] = None
-    smtp_password: Optional[str] = None
-    smtp_from_email: Optional[str] = None
+    # mailgun config
+    mailgun_api_key: Optional[str] = None
+    mailgun_domain: Optional[str] = None
+    mailgun_from_email: Optional[str] = None
+    mailgun_from_name: str = "Sydney Bot"
+    mailgun_webhook_signing_key: Optional[str] = None
 
     # shopify config
     shopify_api_key: Optional[str] = None

@@ -95,6 +95,34 @@ class DatabaseService:
         cursor = self.db.social_posts.find(query).sort("scheduled_at", 1)
         return await cursor.to_list(length=None)
 
+    async def get_campaign_stats(self, campaign_id: str) -> dict:
+        # aggregate open/click/bounce counters from email_events collection
+        pipeline = [
+            {"$match": {"campaign_id": campaign_id}},
+            {"$group": {"_id": "$event_type", "count": {"$sum": 1}}},
+        ]
+        cursor = self.db.email_events.aggregate(pipeline)
+        rows = await cursor.to_list(length=None)
+
+        stats = {row["_id"]: row["count"] for row in rows}
+        delivered = stats.get("delivered", 0)
+
+        return {
+            "campaign_id": campaign_id,
+            "delivered": delivered,
+            "opens": stats.get("opened", 0),
+            "clicks": stats.get("clicked", 0),
+            "bounces": stats.get("failed", 0),
+            "unsubscribes": stats.get("unsubscribed", 0),
+            "spam_reports": stats.get("complained", 0),
+            "open_rate": round(stats.get("opened", 0) / delivered * 100, 2)
+            if delivered
+            else 0,
+            "click_rate": round(stats.get("clicked", 0) / delivered * 100, 2)
+            if delivered
+            else 0,
+        }
+
     # conversation history operations
     async def save_conversation(
         self, user_id: str, channel_id: str, message: str, response: str
