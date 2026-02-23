@@ -5,9 +5,15 @@ from slack_bolt.async_app import AsyncApp
 
 from slack_agent.config.settings import settings
 from slack_agent.core.agent import ai_agent
-from slack_agent.models.schemas import DateRangeQuery, EmailRecipient
+from slack_agent.core.router_agent import route_intent
+from slack_agent.models.schemas import (
+    DateRangeQuery,
+    EmailRecipient,
+    InfluencerCampaign,
+)
 from slack_agent.services.cache import cache_service
 from slack_agent.services.database import db_service
+from slack_agent.tools.influencer_tool import influencer_tool
 from slack_agent.tools.marketing_tools import (
     outreach_tool,
     scheduling_tool,
@@ -68,7 +74,7 @@ class SlackHandler:
             # get conversation history
             conv_history = await db_service.get_conversation_history(user_id, limit=5)
 
-            # check for special commands
+            # process command with ai router
             response_text = await self._process_command(
                 clean_text, user_info, channel_info, conv_history
             )
@@ -156,6 +162,7 @@ class SlackHandler:
 *capabilities:*
 • email outreach campaigns
 • schedule social media posts
+• influencer discovery & outreach
 • generate marketing content
 • collect customer data
 • marketing strategy advice
@@ -170,6 +177,8 @@ class SlackHandler:
 • "generate instagram post about our new product"
 • "schedule post for tomorrow 3pm"
 • "create promotional email for summer sale"
+• "find fashion influencers on youtube with 100k+ followers"
+• "launch influencer campaign for summer collection budget $500"
 """
 
         await respond(help_text)
@@ -186,63 +195,65 @@ class SlackHandler:
     async def _process_command(
         self, text: str, user_info: Dict, channel_info: Dict, conv_history: list
     ) -> str:
-        text_lower = text.lower()
+        # route intent using ai agent instead of keyword matching
+        routing = await route_intent(text, user_info, conv_history)
+        intent = routing.intent
+        params = routing.params
 
-        # handle outreach commands
-        if any(
-            word in text_lower
-            for word in ["collect email", "get email", "customer email"]
-        ):
-            return await self._handle_email_collection(text, user_info)
+        # dispatch to appropriate handler based on intent
+        if intent == "email_collection":
+            return await self._handle_email_collection(text, user_info, params)
 
-        # handle scheduling commands
-        if "schedule" in text_lower and (
-            "post" in text_lower or "message" in text_lower
-        ):
-            return await self._handle_schedule_post(text, user_info)
+        elif intent == "schedule_post":
+            return await self._handle_schedule_post(text, user_info, params)
 
-        # handle immediate posting
-        if any(word in text_lower for word in ["post now", "publish now"]) and any(
-            word in text_lower
-            for word in ["twitter", "linkedin", "facebook", "instagram"]
-        ):
-            return await self._handle_schedule_post(text, user_info)
-
-        # check social media accounts
-        if "check accounts" in text_lower or "verify platforms" in text_lower:
+        elif intent == "check_accounts":
             return await self._handle_check_accounts()
 
-        # handle campaign creation
-        if "campaign" in text_lower or "send email" in text_lower:
-            return await self._handle_create_campaign(text, user_info)
+        elif intent == "create_campaign":
+            return await self._handle_create_campaign(text, user_info, params)
 
-        # default ai response
-        response = await ai_agent.run(
-            message=text,
-            user_info=user_info,
-            channel_info=channel_info,
-            conversation_history=conv_history,
-        )
+        elif intent == "influencer_campaign":
+            return await self._handle_influencer_command(text, user_info, params)
 
-        return response.content
+        else:  # general_chat
+            response = await ai_agent.run(
+                message=text,
+                user_info=user_info,
+                channel_info=channel_info,
+                conversation_history=conv_history,
+            )
+            return response.content
 
-    async def _handle_email_collection(self, text: str, user_info: Dict) -> str:
+    async def _handle_email_collection(
+        self, text: str, user_info: Dict, params: Dict
+    ) -> str:
         try:
+            # use ai-extracted params or fallback to parsing
+            source = params.get(
+                "source", "shopify" if "shopify" in text.lower() else "database"
+            )
+            min_orders = params.get("min_orders", 0)
+
             # parse date range
-            date_range = parse_date_range_from_text(text)
+            date_range = None
+            if "date_range" in params and params["date_range"]:
+                import re
 
-            # parse min orders
-            import re
+                match = re.search(r"(\d+)\s*days?", params["date_range"])
+                if match:
+                    days = int(match.group(1))
+                    from datetime import timedelta
 
-            min_orders = 0
-            match = re.search(r"(?:min|minimum|at least)\s+(\d+)\s+order", text.lower())
-            if match:
-                min_orders = int(match.group(1))
+                    end = datetime.now()
+                    start = end - timedelta(days=days)
+                    date_range = {
+                        "start_date": start.isoformat(),
+                        "end_date": end.isoformat(),
+                    }
+            else:
+                date_range = parse_date_range_from_text(text)
 
-            # determine source
-            source = "shopify" if "shopify" in text.lower() else "database"
-
-            # collect emails
             date_range_obj = None
             if date_range:
                 date_range_obj = DateRangeQuery(**date_range)
@@ -277,42 +288,33 @@ say "generate promotional email for [topic]" to continue"""
         except Exception as e:
             return f"error collecting emails: {str(e)}"
 
-    async def _handle_schedule_post(self, text: str, user_info: Dict) -> str:
+    async def _handle_schedule_post(
+        self, text: str, user_info: Dict, params: Dict
+    ) -> str:
         try:
-            # parse platforms
-            platforms = []
-            text_lower = text.lower()
+            # use ai-extracted platforms or default
+            platforms = params.get("platforms", ["twitter"])
+            is_immediate = params.get("immediate", False)
 
-            for p in ["twitter", "linkedin", "facebook", "instagram"]:
-                if p in text_lower:
-                    platforms.append(p)
-
-            if not platforms:
-                platforms = ["twitter"]  # default
-
-            # check if posting now or scheduling
-            is_immediate = any(
-                word in text_lower
-                for word in ["post now", "publish now", "immediately"]
-            )
-
-            # parse scheduled time (if not immediate)
+            # parse scheduled time if not immediate
             scheduled_at = None
             if not is_immediate:
-                scheduled_at = parse_date_from_text(text)
+                if "scheduled_time" in params and params["scheduled_time"]:
+                    scheduled_at = parse_date_from_text(params["scheduled_time"])
+                else:
+                    scheduled_at = parse_date_from_text(text)
+
                 if not scheduled_at:
                     return "couldn't parse schedule time, please specify (e.g., 'tomorrow 3pm') or say 'post now'"
 
-            # generate content
             from services.social_media_manager import social_media_manager
 
             content = await social_media_tool.generate_post_content(
-                platform=platforms[0],  # generate for first platform
+                platform=platforms[0],
                 topic=text,
                 tone="professional",
             )
 
-            # optimize for each platform
             optimized_content = {}
             for platform in platforms:
                 optimized_content[platform] = (
@@ -361,7 +363,9 @@ post will be published automatically at scheduled time"""
         except Exception as e:
             return f"error scheduling post: {str(e)}"
 
-    async def _handle_create_campaign(self, text: str, user_info: Dict) -> str:
+    async def _handle_create_campaign(
+        self, text: str, user_info: Dict, params: Dict
+    ) -> str:
         try:
             # get cached recipients
             cached = await cache_service.get(f"recipients:{user_info['id']}")
@@ -370,15 +374,20 @@ post will be published automatically at scheduled time"""
 
             recipients = [EmailRecipient(**r) for r in cached]
 
-            # generate email content
+            # use ai-extracted topic if available
+            topic = params.get("topic", text)
+
             campaign_content = await outreach_tool.generate_campaign_content(
                 campaign_type="promotional",
-                product_details=text,
+                product_details=topic,
                 target_audience="existing customers",
             )
 
-            # check if scheduled
-            scheduled_at = parse_date_from_text(text)
+            scheduled_at = None
+            if params.get("scheduled"):
+                scheduled_at = parse_date_from_text(params["scheduled"])
+            else:
+                scheduled_at = parse_date_from_text(text)
 
             # create campaign
             campaign_id = await outreach_tool.create_campaign(
@@ -403,6 +412,191 @@ reply "send now" to send immediately or "preview" to see full email"""
 
         except Exception as e:
             return f"error creating campaign: {str(e)}"
+
+    async def _handle_influencer_command(
+        self, text: str, user_info: Dict, params: Dict
+    ) -> str:
+        try:
+            product_name = params.get("product_name", "")
+            budget_str = params.get("budget", "500")
+            platforms = params.get("platforms", ["youtube", "instagram"])
+
+            # parse budget
+            import re
+
+            budget_match = re.search(r"(\d+)", budget_str)
+            budget = float(budget_match.group(1)) if budget_match else 500.0
+
+            text_lower = text.lower()
+
+            # launch full discovery + outreach pipeline
+            if any(
+                w in text_lower
+                for w in ["launch", "find", "discover", "start campaign", "search for"]
+            ):
+                if not product_name:
+                    # try to extract from message
+                    product_match = re.search(
+                        r"(?:for|about|regarding)\s+(.+?)(?:\s+budget|\s+on|\s*$)",
+                        text,
+                        re.IGNORECASE,
+                    )
+                    product_name = (
+                        product_match.group(1).strip() if product_match else text
+                    )
+
+                campaign = InfluencerCampaign(
+                    product_name=product_name,
+                    product_description=product_name,
+                    target_niche=product_name,
+                    budget_per_influencer=budget,
+                    max_budget=budget * 10,
+                    target_platforms=platforms,
+                    target_tiers=["micro", "macro"],
+                    min_followers=10000,
+                    min_engagement_rate=2.0,
+                )
+
+                # save campaign to db
+                campaign_dict = campaign.dict()
+                campaign_dict["id"] = f"icampaign_{datetime.now().timestamp()}"
+                campaign_dict["status"] = "running"
+                campaign_dict["created_at"] = datetime.now()
+                await db_service.db.influencer_campaigns.insert_one(campaign_dict)
+
+                # run full pipeline async
+                result = await influencer_tool.run_full_pipeline(campaign)
+
+                discovered = len(result.get("influencers", []))
+                scored = len(result.get("scored_influencers", []))
+                contacted = result.get("outreach_sent", 0)
+
+                return f"""influencer pipeline launched ✓
+campaign id: {campaign_dict["id"]}
+product: {product_name}
+budget: ${budget} per influencer
+platforms: {", ".join(platforms)}
+
+discovery results:
+• discovered: {discovered} creators
+• scored: {scored} relevant matches
+• outreach sent: {contacted}
+
+check dashboard at /influencers for real-time status
+you'll get notifications when influencers respond"""
+
+            # check campaign stats
+            elif any(
+                w in text_lower for w in ["stats", "status", "progress", "how many"]
+            ):
+                # get latest campaign
+                latest = await db_service.db.influencer_campaigns.find_one(
+                    {}, sort=[("created_at", -1)]
+                )
+                if not latest:
+                    return "no influencer campaigns found, launch one first with 'find influencers for [product]'"
+
+                campaign_id = latest["id"]
+                stats = await influencer_tool.get_pipeline_stats(campaign_id)
+
+                return f"""influencer campaign stats:
+campaign: {latest.get("product_name", "unknown")}
+status: {latest.get("status", "unknown")}
+
+pipeline breakdown:
+• total discovered: {stats.get("total", 0)}
+• contacted: {stats.get("contacted", 0)}
+• negotiating: {stats.get("negotiating", 0)}
+• agreed: {stats.get("agreed", 0)}
+• onboarded: {stats.get("onboarded", 0)}
+• rejected: {stats.get("rejected", 0)}
+
+response rate: {stats.get("contacted", 0) and round((stats.get("negotiating", 0) + stats.get("agreed", 0)) / stats.get("contacted", 1) * 100, 1)}%"""
+
+            # list influencers by status
+            elif any(w in text_lower for w in ["show", "list", "who"]):
+                status_filter = None
+                if "onboarded" in text_lower:
+                    status_filter = "onboarded"
+                elif "negotiating" in text_lower:
+                    status_filter = "negotiating"
+                elif "contacted" in text_lower:
+                    status_filter = "contacted"
+
+                query = {"status": status_filter} if status_filter else {}
+                cursor = db_service.db.influencers.find(query).limit(10)
+                influencers = await cursor.to_list(length=10)
+
+                if not influencers:
+                    return f"no influencers found{' with status ' + status_filter if status_filter else ''}"
+
+                lines = [
+                    f"influencers{' - ' + status_filter if status_filter else ''}:\n"
+                ]
+                for inf in influencers:
+                    lines.append(
+                        f"• {inf['name']} (@{inf['handle']}) - {inf['platform']} - "
+                        f"{inf.get('followers', 'unknown')} followers - {inf['status']}"
+                    )
+
+                return "\n".join(lines)
+
+            # handle reply/negotiation
+            elif any(
+                w in text_lower
+                for w in ["replied", "responded", "counter", "accepted", "rejected"]
+            ):
+                # extract influencer handle
+                handle_match = re.search(r"@(\w+)", text)
+                if not handle_match:
+                    return "couldn't find influencer handle, please mention them like '@username replied...'"
+
+                handle = handle_match.group(1)
+
+                # find influencer
+                influencer = await db_service.db.influencers.find_one(
+                    {"handle": f"@{handle}"}
+                )
+                if not influencer:
+                    return f"influencer @{handle} not found in our database"
+
+                # extract reply content
+                reply_match = re.search(
+                    r"(?:replied|said|wrote):\s*(.+)$", text, re.IGNORECASE | re.DOTALL
+                )
+                reply_content = reply_match.group(1).strip() if reply_match else text
+
+                # process negotiation
+                result = await influencer_tool.handle_reply(
+                    influencer_id=influencer["channel_id"],
+                    reply_text=reply_content,
+                )
+
+                return f"""reply processed for @{handle} ✓
+status: {result.get("status", "unknown")}
+action taken: {result.get("action", "none")}
+
+{result.get("message", "negotiation updated")}"""
+
+            else:
+                return """influencer commands:
+• 'find [niche] influencers on youtube' - discover creators
+• 'launch influencer campaign for [product] budget $500' - full pipeline
+• 'influencer stats' - check campaign progress
+• 'show onboarded influencers' - list by status
+• '@username replied: [message]' - process influencer reply
+
+examples:
+• "find fashion influencers on instagram with 100k+ followers"
+• "launch influencer campaign for summer dress collection budget $300"
+• "@fashionista_ria replied: I'd love to collaborate, my rate is $400"
+"""
+
+        except Exception as e:
+            import traceback
+
+            traceback.print_exc()
+            return f"error handling influencer command: {str(e)}"
 
     async def _handle_check_accounts(self) -> str:
         # check which social media accounts are configured
@@ -442,9 +636,14 @@ reply "send now" to send immediately or "preview" to see full email"""
     async def _get_user_info(self, client, user_id: str) -> Dict:
         try:
             result = await client.users_info(user=user_id)
-            return result["user"]
+            user = result["user"]
+            return {
+                "id": user_id,
+                "name": user.get("real_name", user.get("name", "unknown")),
+                "username": user.get("name", "unknown"),
+            }
         except Exception:
-            return {"id": user_id}
+            return {"id": user_id, "name": "unknown", "username": "unknown"}
 
     async def _get_channel_info(self, client, channel_id: str) -> Dict:
         try:
