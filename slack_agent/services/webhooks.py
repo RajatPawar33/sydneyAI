@@ -2,8 +2,9 @@ from datetime import datetime
 from typing import Any, Dict
 
 from fastapi import APIRouter, Header, HTTPException, Request
-from services.database import db_service
-from services.email import mailgun_client
+
+from slack_agent.services.database import db_service
+from slack_agent.services.email import mailgun_client
 
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 

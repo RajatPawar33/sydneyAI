@@ -2,7 +2,8 @@ import json
 from typing import Any, Optional
 
 import redis.asyncio as aioredis
-from config.settings import settings
+
+from slack_agent.config.settings import settings
 
 
 class CacheService:
@@ -12,7 +13,6 @@ class CacheService:
     async def connect(self):
         self.redis = await aioredis.from_url(
             f"redis://{settings.redis_host}:{settings.redis_port}/{settings.redis_db}",
-            password=settings.redis_password,
             decode_responses=True,
         )
 

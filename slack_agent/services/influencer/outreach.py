@@ -2,17 +2,18 @@ import json
 from datetime import datetime
 from typing import Dict, List, Optional
 
-from config.settings import settings
 from langchain_core.messages import HumanMessage
 from langchain_openai import ChatOpenAI
-from models.schemas import (
+
+from slack_agent.config.settings import settings
+from slack_agent.models.schemas import (
     InfluencerCampaign,
     InfluencerProfile,
     InfluencerStatus,
     NegotiationState,
 )
-from services.database import db_service
-from services.email import mailgun_client
+from slack_agent.services.database import db_service
+from slack_agent.services.email import mailgun_client
 
 
 class InfluencerOutreach:

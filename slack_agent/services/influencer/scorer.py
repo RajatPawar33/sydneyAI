@@ -1,10 +1,11 @@
 import json
 from typing import Dict, List
 
-from config.settings import settings
 from langchain_core.messages import HumanMessage
 from langchain_openai import ChatOpenAI
-from models.schemas import InfluencerCampaign, InfluencerProfile
+
+from slack_agent.config.settings import settings
+from slack_agent.models.schemas import InfluencerCampaign, InfluencerProfile
 
 
 class InfluencerScorer:

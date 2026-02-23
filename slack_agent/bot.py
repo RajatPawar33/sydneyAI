@@ -2,19 +2,23 @@ import asyncio
 import threading
 
 import uvicorn
-from config.settings import settings
-from core.handler import SlackHandler
 from fastapi import FastAPI
-from services.cache import cache_service
-from services.database import db_service
-from services.scheduler import scheduler_service
-from services.webhooks import router as webhook_router
 from slack_bolt.adapter.socket_mode.async_handler import AsyncSocketModeHandler
 from slack_bolt.async_app import AsyncApp
+
+from slack_agent.api.test_bot import register_handler
+from slack_agent.api.test_bot import router as test_router
+from slack_agent.config.settings import settings
+from slack_agent.core.handler import SlackHandler
+from slack_agent.services.cache import cache_service
+from slack_agent.services.database import db_service
+from slack_agent.services.scheduler import scheduler_service
+from slack_agent.services.webhooks import router as webhook_router
 
 # fastapi app for webhook endpoints
 web_app = FastAPI(title="slack-agent webhooks")
 web_app.include_router(webhook_router)
+web_app.include_router(test_router)
 
 
 async def startup():
@@ -41,28 +45,27 @@ def run_webhook_server():
 async def main():
     # initialize slack app
     app = AsyncApp(
-        token=settings.slack_bot_token, signing_secret=settings.slack_signing_secret
+        token=settings.slack_bot_token,
+        signing_secret=settings.slack_signing_secret,
     )
 
-    # register handlers
-    SlackHandler(app)
+    handler = SlackHandler(app)
 
-    # startup
+    # register handler ref so test route can call _process_command directly
+    register_handler(handler)
+
     await startup()
 
-    # start webhook server in background thread
     webhook_thread = threading.Thread(target=run_webhook_server, daemon=True)
     webhook_thread.start()
 
     print("bot starting...")
     print(f"bot user id: {settings.bot_user_id}")
-    print("webhook server: http://0.0.0.0:8080/webhooks/mailgun")
 
-    # start socket mode
-    handler = AsyncSocketModeHandler(app, settings.slack_app_token)
+    socket_handler = AsyncSocketModeHandler(app, settings.slack_app_token)
 
     try:
-        await handler.start_async()
+        await socket_handler.start_async()
     except KeyboardInterrupt:
         print("\nshutting down...")
     finally:

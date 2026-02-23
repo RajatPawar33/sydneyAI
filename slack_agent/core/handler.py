@@ -1,14 +1,19 @@
 from datetime import datetime
 from typing import Dict
 
-from config.settings import settings
-from core.agent import ai_agent
-from models.schemas import DateRangeQuery, EmailRecipient
-from services.cache import cache_service
-from services.database import db_service
 from slack_bolt.async_app import AsyncApp
-from tools.marketing_tools import outreach_tool, scheduling_tool, social_media_tool
-from utils.helpers import (
+
+from slack_agent.config.settings import settings
+from slack_agent.core.agent import ai_agent
+from slack_agent.models.schemas import DateRangeQuery, EmailRecipient
+from slack_agent.services.cache import cache_service
+from slack_agent.services.database import db_service
+from slack_agent.tools.marketing_tools import (
+    outreach_tool,
+    scheduling_tool,
+    social_media_tool,
+)
+from slack_agent.utils.helpers import (
     clean_slack_text,
     format_slack_message,
     parse_date_from_text,

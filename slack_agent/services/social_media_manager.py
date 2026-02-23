@@ -1,10 +1,10 @@
 from enum import Enum
 from typing import Dict, List, Optional
 
-from services.social.facebook import facebook_client
-from services.social.instagram import instagram_client
-from services.social.linkedin import linkedin_client
-from services.social.twitter import twitter_client
+from slack_agent.services.social.facebook import facebook_client
+from slack_agent.services.social.instagram import instagram_client
+from slack_agent.services.social.linkedin import linkedin_client
+from slack_agent.services.social.twitter import twitter_client
 
 
 class Platform(str, Enum):

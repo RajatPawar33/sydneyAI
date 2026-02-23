@@ -3,8 +3,9 @@ import re
 from typing import Dict, List, Optional
 
 import httpx
-from config.settings import settings
-from models.schemas import InfluencerProfile
+
+from slack_agent.config.settings import settings
+from slack_agent.models.schemas import InfluencerProfile
 
 
 class InstagramDiscovery:

@@ -1,15 +1,15 @@
 import asyncio
 from typing import Dict, List, Optional
 
-from models.schemas import (
+from slack_agent.models.schemas import (
     InfluencerCampaign,
     InfluencerProfile,
 )
-from services.database import db_service
-from services.influencer.instagram_discovery import instagram_discovery
-from services.influencer.outreach import influencer_outreach
-from services.influencer.scorer import influencer_scorer
-from services.influencer.youtube_discovery import youtube_discovery
+from slack_agent.services.database import db_service
+from slack_agent.services.influencer.instagram_discovery import instagram_discovery
+from slack_agent.services.influencer.outreach import influencer_outreach
+from slack_agent.services.influencer.scorer import influencer_scorer
+from slack_agent.services.influencer.youtube_discovery import youtube_discovery
 
 
 class InfluencerTool:

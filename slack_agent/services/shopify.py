@@ -2,7 +2,8 @@ from datetime import datetime
 from typing import Dict, List, Optional
 
 import httpx
-from config.settings import settings
+
+from slack_agent.config.settings import settings
 
 
 class ShopifyService:

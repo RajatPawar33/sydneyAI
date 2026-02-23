@@ -5,8 +5,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import httpx
-from config.settings import settings
-from models.schemas import EmailRecipient
+
+from slack_agent.config.settings import settings
+from slack_agent.models.schemas import EmailRecipient
 
 
 class MailgunClient:

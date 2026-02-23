@@ -2,10 +2,11 @@ import re
 from datetime import datetime
 from typing import Any, Dict, List
 
-from config.settings import settings
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
-from models.schemas import AgentResponse, QueryType
+
+from slack_agent.config.settings import settings
+from slack_agent.models.schemas import AgentResponse, QueryType
 
 
 class AIAgent:

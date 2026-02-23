@@ -2,10 +2,11 @@ import asyncio
 import re
 from typing import Dict, List, Optional
 
-from config.settings import settings
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
-from models.schemas import InfluencerProfile
+
+from slack_agent.config.settings import settings
+from slack_agent.models.schemas import InfluencerProfile
 
 
 class YouTubeDiscovery:

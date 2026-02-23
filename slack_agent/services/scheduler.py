@@ -4,7 +4,8 @@ from typing import Callable
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.date import DateTrigger
-from config.settings import settings
+
+from slack_agent.config.settings import settings
 
 
 class SchedulerService:

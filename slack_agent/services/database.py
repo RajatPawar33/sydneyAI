@@ -1,8 +1,9 @@
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from config.settings import settings
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
+
+from slack_agent.config.settings import settings
 
 
 class DatabaseService:

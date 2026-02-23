@@ -7,6 +7,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env", env_file_encoding="utf-8", case_sensitive=False, extra="ignore"
     )
+    port: int = 8000
 
     # slack credentials
     slack_bot_token: str
@@ -24,7 +25,6 @@ class Settings(BaseSettings):
     redis_host: str = "localhost"
     redis_port: int = 6379
     redis_db: int = 0
-    redis_password: Optional[str] = None
 
     # mongodb config
     mongodb_uri: str = "mongodb://localhost:27017"

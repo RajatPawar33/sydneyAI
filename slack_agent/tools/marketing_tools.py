@@ -1,18 +1,18 @@
 from datetime import datetime
 from typing import Dict, List, Optional
 
-from core.agent import ai_agent
-from models.schemas import (
+from slack_agent.core.agent import ai_agent
+from slack_agent.models.schemas import (
     DateRangeQuery,
     EmailRecipient,
     OutreachCampaign,
     ScheduledTask,
     SocialMediaPost,
 )
-from services.database import db_service
-from services.email import mailgun_client
-from services.scheduler import scheduler_service
-from services.shopify import shopify_service
+from slack_agent.services.database import db_service
+from slack_agent.services.email import mailgun_client
+from slack_agent.services.scheduler import scheduler_service
+from slack_agent.services.shopify import shopify_service
 
 
 class OutreachTool:

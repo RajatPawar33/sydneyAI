@@ -149,7 +149,7 @@ class InfluencerProfile(BaseModel):
     discovered_at: datetime = Field(default_factory=datetime.now)
     last_contacted_at: Optional[datetime] = None
 
-    @field_validator("tier", always=True, pre=False)
+    @field_validator("tier")
     def set_tier(cls, v, values):
         if v:
             return v
