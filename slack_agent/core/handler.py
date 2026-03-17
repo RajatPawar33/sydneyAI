@@ -29,7 +29,7 @@ class SlackHandler:
         self.app.event("message")(self.handle_message_events)
 
         # command handlers
-        self.app.command("/ai-help")(self.handle_help_command)
+        self.app.command("/sydney-help")(self.handle_help_command)
         self.app.command("/schedule-post")(self.handle_schedule_post_command)
         self.app.command("/send-campaign")(self.handle_send_campaign_command)
 
@@ -156,7 +156,7 @@ class SlackHandler:
 • marketing strategy advice
 
 *commands:*
-• `/ai-help` - show this help
+• `/sydney-help` - show this help
 • `/schedule-post` - schedule social post
 • `/send-campaign` - send email campaign
 
@@ -283,7 +283,7 @@ say "generate promotional email for [topic]" to continue"""
                     platforms.append(p)
 
             if not platforms:
-                platforms = ["twitter"]  # default
+                platforms = ["linkedin"]  # default
 
             # check if posting now or scheduling
             is_immediate = any(

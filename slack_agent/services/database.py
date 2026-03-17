@@ -85,6 +85,7 @@ class DatabaseService:
     # social media posts operations
     async def save_social_post(self, post: Dict[str, Any]) -> str:
         result = await self.db.social_posts.insert_one(post)
+        # print(f"Saved social post with ID: {result.inserted_id}")
         return str(result.inserted_id)
 
     async def get_scheduled_posts(self, platform: Optional[str] = None) -> List[Dict]:

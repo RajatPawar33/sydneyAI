@@ -5,10 +5,7 @@ from config.settings import settings
 
 
 class LinkedInClient:
-    """
-    linkedin api integration
-    uses oauth 2.0 for authentication
-    """
+   
 
     def __init__(self):
         self.access_token = getattr(settings, "linkedin_access_token", None)
@@ -23,25 +20,27 @@ class LinkedInClient:
         }
 
     async def create_post(self, text: str) -> Dict:
-        # create text post (ugcPost)
+    
         if not self.access_token or not self.person_id:
             raise ValueError("linkedin credentials not configured")
 
         # max 3000 chars for linkedin
         if len(text) > 3000:
             text = text[:2997] + "..."
-
         payload = {
-            "author": f"urn:li:person:{self.person_id}",
-            "lifecycleState": "PUBLISHED",
-            "specificContent": {
-                "com.linkedin.ugc.ShareContent": {
-                    "shareCommentary": {"text": text},
-                    "shareMediaCategory": "NONE",
-                }
-            },
-            "visibility": {"com.linkedin.ugc.MemberNetworkVisibility": "PUBLIC"},
+    "author": f"urn:li:person:{self.person_id}",
+    "lifecycleState": "PUBLISHED",
+    
+    "specificContent": {
+        "com.linkedin.ugc.ShareContent": {
+            "shareCommentary": {"text": text},
+            "shareMediaCategory": "NONE",
         }
+    },
+    "visibility": {"com.linkedin.ugc.MemberNetworkVisibility": "PUBLIC"},
+}
+
+        
 
         async with httpx.AsyncClient() as client:
             response = await client.post(
@@ -92,15 +91,18 @@ class LinkedInClient:
                 return {"success": False, "error": response.text}
 
     async def get_profile(self) -> Optional[Dict]:
-        # get user profile
         async with httpx.AsyncClient() as client:
             response = await client.get(
                 f"{self.base_url}/me", headers=self._get_headers()
             )
 
+            print("LinkedIn /me status:", response.status_code)
+            print("LinkedIn /me response:", response.text)
+
             if response.status_code == 200:
                 return response.json()
             return None
+
 
 
 linkedin_client = LinkedInClient()

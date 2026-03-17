@@ -4,18 +4,19 @@ from typing import Any, Dict, List
 
 from config.settings import settings
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
+from langchain_ollama import ChatOllama
+
 from models.schemas import AgentResponse, QueryType
 
 
 class AIAgent:
     def __init__(self):
-        self.llm = ChatOpenAI(
-            model=settings.openai_model,
-            temperature=settings.openai_temperature,
-            max_tokens=settings.openai_max_tokens,
-            api_key=settings.openai_api_key,
-        )
+        self.llm = ChatOllama(
+    model=settings.ollama_model,
+    base_url=settings.ollama_base_url,
+    temperature=settings.ollama_temperature
+)
+
 
         self.query_patterns = {
             QueryType.OUTREACH: [

@@ -34,13 +34,52 @@ def format_slack_message(text: str, max_length: int = 3000) -> str:
     return f"{truncated}\n\n_[message truncated]_"
 
 
-def parse_date_from_text(text: str) -> Optional[datetime]:
-    # try to extract date from natural language
-    # "tomorrow at 3pm", "next monday", "2024-01-15"
+import re
+from datetime import datetime
+from typing import Optional
+import dateparser
 
-    # use dateparser library for natural language
-    parsed = dateparser.parse(text, settings={"PREFER_DATES_FROM": "future"})
+
+def parse_date_from_text(text: str) -> Optional[datetime]:
+    
+
+    if not text:
+        return None
+
+    text = text.lower()
+
+    
+    text = re.sub(r"(\d{1,2})\.(\d{2})\s*(am|pm)", r"\1:\2\3", text)
+
+    patterns = [
+        r"(today\s*(at)?\s*\d{1,2}(:\d{2})?\s*(am|pm))",
+        r"(tomorrow\s*(at)?\s*\d{1,2}(:\d{2})?\s*(am|pm))",
+        r"(next\s+\w+(\s+at\s+\d{1,2}(:\d{2})?\s*(am|pm))?)",
+        r"(\d{4}-\d{2}-\d{2})",
+        r"(in\s+\d+\s+(minutes?|hours?|days?))",
+    ]
+
+    match_text = None
+    for p in patterns:
+        m = re.search(p, text, re.IGNORECASE)
+        if m:
+            match_text = m.group(0)
+            break
+
+    # fallback → try full text
+    if not match_text:
+        match_text = text
+
+    parsed = dateparser.parse(
+        match_text,
+        settings={
+            "PREFER_DATES_FROM": "future",
+            "RELATIVE_BASE": datetime.now(),
+        },
+    )
+    # print(f"Parsed date from text '{text}': {parsed}")
     return parsed
+
 
 
 def extract_email_from_text(text: str) -> List[str]:

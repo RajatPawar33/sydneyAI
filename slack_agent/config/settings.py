@@ -5,7 +5,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env", env_file_encoding="utf-8", case_sensitive=False, extra="ignore"
+        env_file=r"C:\Users\rv401\Desktop\sydneyAI\.env.example", env_file_encoding="utf-8", case_sensitive=False, extra="ignore"
     )
 
     # slack credentials
@@ -14,11 +14,12 @@ class Settings(BaseSettings):
     slack_signing_secret: str
     bot_user_id: str
 
-    # openai credentials
-    openai_api_key: str
-    openai_model: str = "gpt-4o-mini"
-    openai_temperature: float = 0.7
-    openai_max_tokens: int = 1000
+    # Ollama
+    ollama_base_url: str = "http://localhost:11434"
+    ollama_model: str = "llama3:8b"
+    ollama_temperature: float = 0.7
+    ollama_max_tokens: int = 1000
+
 
     # redis config
     redis_host: str = "localhost"
@@ -68,7 +69,7 @@ class Settings(BaseSettings):
     show_typing_indicator: bool = True
 
     # scheduler settings
-    scheduler_timezone: str = "UTC"
+    scheduler_timezone: str = "Asia/Kolkata"
 
     # rate limiting
     rate_limit_per_user: int = 10

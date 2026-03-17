@@ -1,5 +1,6 @@
 from datetime import datetime
 from typing import Dict, List, Optional
+from unittest import result
 
 from core.agent import ai_agent
 from models.schemas import (
@@ -13,7 +14,7 @@ from services.database import db_service
 from services.email import email_service
 from services.scheduler import scheduler_service
 from services.shopify import shopify_service
-
+from bson import ObjectId
 
 class OutreachTool:
     async def collect_customer_emails(
@@ -135,8 +136,11 @@ class SchedulingTool:
             media_urls=None,
             tags=None,
         )
-
-        post_id = await db_service.save_social_post(post.dict())
+        post_data = post.dict()
+        post_data["status"] = "scheduled" 
+        post_data["created_at"] = datetime.now()
+        post_id = await db_service.save_social_post(post_data)
+        # post_id = await db_service.save_social_post(post.dict())
 
         # publish immediately
         result = await social_media_manager.post_to_platform(
@@ -146,7 +150,7 @@ class SchedulingTool:
         # update status
         status = "published" if result.get("success") else "failed"
         await db_service.db.social_posts.update_one(
-            {"_id": post_id},
+            {"_id": ObjectId(post_id)},
             {
                 "$set": {
                     "status": status,
@@ -166,12 +170,13 @@ class SchedulingTool:
         scheduled_at: Optional[datetime] = None,
         link: Optional[str] = None,
     ) -> Dict[str, str]:
-        # post or schedule same content to multiple platforms
+        
         post_ids = {}
 
         for platform in platforms:
             if scheduled_at:
                 # schedule for later
+                # print(f"Scheduling post from post_to_multiple_platforms  {platform} at {scheduled_at}")
                 post_id = await self.schedule_social_post(
                     platform=platform, content=content, scheduled_at=scheduled_at
                 )
@@ -198,8 +203,11 @@ class SchedulingTool:
             media_urls=media_urls,
             tags=tags,
         )
-
-        post_id = await db_service.save_social_post(post.dict())
+        # print(f"Scheduling post from schedule_social_post: {platform} at {scheduled_at}")
+        post_data = post.dict()
+        post_data["status"] = "scheduled"  
+        post_data["created_at"] = datetime.now()
+        post_id = await db_service.save_social_post(post_data)
 
         # schedule posting task
         scheduler_service.schedule_task(
@@ -243,19 +251,21 @@ class SchedulingTool:
         # get post from database
         from services.social_media_manager import social_media_manager
 
-        post = await db_service.db.social_posts.find_one({"_id": post_id})
+        post = await db_service.db.social_posts.find_one({"_id": ObjectId(post_id)})
         if not post:
+            print(f"Post with ID {post_id} not found")
             return
 
         # publish to platform
         result = await social_media_manager.post_to_platform(
             platform=post["platform"], content=post["content"], link=post.get("link")
         )
+           
 
         # update post status
         status = "published" if result.get("success") else "failed"
         await db_service.db.social_posts.update_one(
-            {"_id": post_id},
+            {"_id": ObjectId(post_id)},
             {
                 "$set": {
                     "status": status,
@@ -270,18 +280,34 @@ class SchedulingTool:
         # placeholder for task execution
         await db_service.update_task_status(task_id, "completed")
 
-
+    def run_async(coro):
+        def wrapper(*args, **kwargs):
+            asyncio.create_task(coro(*args, **kwargs))
+        return wrapper
+    
 class SocialMediaTool:
     async def generate_post_content(
         self, platform: str, topic: str, tone: str = "professional"
     ) -> str:
-        prompt = f"""generate {platform} post about: {topic}
-tone: {tone}
-requirements:
-- engaging and concise
-- include relevant hashtags
-- call to action
-- platform-appropriate length"""
+        prompt = f"""
+Write a high-quality {platform} post about: {topic}.
+
+Tone: {tone}
+
+Rules:
+- Begin immediately with the post content. Do NOT use meta phrases such as "Here is your post", "Sure", "Below is", etc.
+- Write in a natural, authentic, and human-like style suitable for {platform}.
+- Keep the content clear, engaging, and concise.
+- Follow platform-native writing style.
+- Include relevant hashtags at the end of the post.
+- Use 3-8 meaningful and relevant hashtags (avoid spammy or generic ones).
+- Add a subtle, non-salesy call to action.
+- Keep the length appropriate for {platform}.
+- Do NOT mention AI, ChatGPT, or that the content was generated.
+- Do NOT include explanations, headings, or extra text before or after the post.
+- Output ONLY the final post content.
+"""
+
 
         # use ai to generate
         from langchain_core.messages import HumanMessage
@@ -292,6 +318,8 @@ requirements:
 
     async def get_scheduled_posts(self, platform: Optional[str] = None) -> List[Dict]:
         return await db_service.get_scheduled_posts(platform)
+
+    
 
 
 # tool instances
