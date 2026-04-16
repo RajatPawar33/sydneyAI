@@ -1,9 +1,7 @@
 import asyncio
-import threading
-
 import uvicorn
 from fastapi import FastAPI
-from slack_bolt.adapter.socket_mode.async_handler import AsyncSocketModeHandler
+from slack_bolt.adapter.socket_mode.aiohttp import AsyncSocketModeHandler
 from slack_bolt.async_app import AsyncApp
 
 from slack_agent.api.test_bot import register_handler
@@ -20,60 +18,58 @@ web_app = FastAPI(title="slack-agent webhooks")
 web_app.include_router(webhook_router)
 web_app.include_router(test_router)
 
-
 async def startup():
-    # connect to services
+    """Initializes external service connections within the active loop."""
     await db_service.connect()
     await cache_service.connect()
     scheduler_service.start()
     print("✓ services connected")
 
-
 async def shutdown():
-    # disconnect services
+    """Gracefully disconnects services."""
     await db_service.disconnect()
     await cache_service.disconnect()
     scheduler_service.shutdown()
     print("✓ services disconnected")
 
-
-def run_webhook_server():
-    # run fastapi in a separate thread so it doesn't block the slack socket
-    uvicorn.run(web_app, host="0.0.0.0", port=8080, log_level="warning")
-
-
 async def main():
-    # initialize slack app
+    # 1. Initialize slack app
     app = AsyncApp(
         token=settings.slack_bot_token,
         signing_secret=settings.slack_signing_secret,
     )
-
+    
+    # 2. Register handlers
     handler = SlackHandler(app)
-
-    # register handler ref so test route can call _process_command directly
     register_handler(handler)
 
+    # 3. Ensure all services connect within THIS specific async loop
     await startup()
 
-    webhook_thread = threading.Thread(target=run_webhook_server, daemon=True)
-    webhook_thread.start()
+    # 4. Prepare the Webhook Server configuration
+    # We use a Server instance instead of uvicorn.run to control the loop
+    config = uvicorn.Config(app=web_app, host="0.0.0.0", port=8080, log_level="warning")
+    server = uvicorn.Server(config)
 
-    print("bot starting...")
-    print(f"bot user id: {settings.bot_user_id}")
-
+    # 5. Prepare the Slack Socket Mode handler
     socket_handler = AsyncSocketModeHandler(app, settings.slack_app_token)
 
+    print(f"bot starting with user id: {settings.bot_user_id}...")
+
     try:
-        await socket_handler.start_async()
+        
+        await asyncio.gather(
+            server.serve(),
+            socket_handler.start_async()
+        )
     except KeyboardInterrupt:
         print("\nshutting down...")
     finally:
         await shutdown()
 
-
 if __name__ == "__main__":
     try:
+        # Standard entry point for the asyncio loop
         asyncio.run(main())
     except KeyboardInterrupt:
         print("\nbot stopped")

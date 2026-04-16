@@ -1,9 +1,10 @@
 import re
+import json
 from datetime import datetime
 from typing import Any, Dict, List
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
+from langchain_community.chat_models import ChatOllama  # Switched to Ollama
 
 from slack_agent.config.settings import settings
 from slack_agent.models.schemas import AgentResponse, QueryType
@@ -11,11 +12,12 @@ from slack_agent.models.schemas import AgentResponse, QueryType
 
 class AIAgent:
     def __init__(self):
-        self.llm = ChatOpenAI(
-            model=settings.openai_model,
-            temperature=settings.openai_temperature,
-            max_tokens=settings.openai_max_tokens,
-            api_key=settings.openai_api_key,
+        # Initialize Ollama using your Settings class attributes
+        self.llm = ChatOllama(
+            model=settings.ollama_model,
+            base_url=settings.ollama_base_url,
+            temperature=settings.ollama_temperature,
+
         )
 
         self.query_patterns = {
@@ -44,12 +46,10 @@ class AIAgent:
 
     def classify_query(self, text: str) -> QueryType:
         text_lower = text.lower()
-
         for query_type, patterns in self.query_patterns.items():
             for pattern in patterns:
                 if re.search(pattern, text_lower):
                     return query_type
-
         return QueryType.GENERAL
 
     def create_system_prompt(
@@ -79,8 +79,6 @@ guidelines:
 - ask clarifying questions when needed
 - provide specific recommendations
 """
-
-        # add specialized instructions based on query type
         specialized_prompts = {
             QueryType.OUTREACH: """
 focus: email outreach campaigns
@@ -88,44 +86,18 @@ help user:
 - collect customer emails from database or shopify
 - generate personalized email content
 - schedule bulk email sends
-- track campaign performance
-
-when user requests email collection, ask for:
-- date range (if needed)
-- minimum order count filter
-- specific customer segments
 """,
             QueryType.SCHEDULE: """
 focus: task and post scheduling
-help user:
-- schedule social media posts
-- set reminders for tasks
-- create recurring campaigns
-- manage content calendar
-
-when scheduling, confirm:
-- exact date and time
-- platform/channel
-- content details
+confirm exact date, time, and platform.
 """,
             QueryType.CONTENT: """
 focus: content creation
-help user:
-- generate social media posts
-- create campaign copy
-- brainstorm content ideas
-- optimize for engagement
-
-provide:
-- platform-specific formatting
-- relevant hashtags
-- call-to-action suggestions
+provide platform-specific formatting and hashtags.
 """,
         }
 
-        specialized = specialized_prompts.get(query_type, "")
-
-        return base_prompt + specialized
+        return base_prompt + specialized_prompts.get(query_type, "")
 
     async def run(
         self,
@@ -134,25 +106,18 @@ provide:
         channel_info: Dict[str, Any],
         conversation_history: List[Dict] = None,
     ) -> AgentResponse:
-        # classify query
         query_type = self.classify_query(message)
-
-        # create system prompt
         system_prompt = self.create_system_prompt(query_type, user_info, channel_info)
 
-        # prepare messages
         messages = [SystemMessage(content=system_prompt)]
 
-        # add conversation history if available
         if conversation_history:
-            for conv in conversation_history[-5:]:  # last 5 messages
+            for conv in conversation_history[-5:]:
                 messages.append(HumanMessage(content=conv.get("message", "")))
                 messages.append(AIMessage(content=conv.get("response", "")))
 
-        # add current message
         messages.append(HumanMessage(content=message))
 
-        # generate response
         response = await self.llm.ainvoke(messages)
 
         return AgentResponse(
@@ -167,26 +132,34 @@ provide:
     async def generate_email_content(
         self, campaign_type: str, product_details: str, target_audience: str
     ) -> Dict[str, str]:
+        # Create a specific JSON-only LLM instance for this method
+        json_llm = ChatOllama(
+            model=settings.ollama_model,
+            base_url=settings.ollama_base_url,
+            format="json",
+            temperature=0.3
+        )
+
         prompt = f"""generate promotional email for:
 campaign type: {campaign_type}
 product: {product_details}
 audience: {target_audience}
 
-provide:
-1. subject line (under 60 chars)
-2. email body (professional, persuasive, under 300 words)
-3. call to action
+Return ONLY a JSON object with:
+"subject": (string under 60 chars)
+"body": (professional email body)
+"cta": (call to action text)"""
 
-format as json"""
+        response = await json_llm.ainvoke([HumanMessage(content=prompt)])
 
-        response = await self.llm.ainvoke([HumanMessage(content=prompt)])
-
-        # parse response (implement proper json parsing)
-        return {
-            "subject": "default subject",
-            "body": response.content,
-            "cta": "shop now",
-        }
+        try:
+            return json.loads(response.content)
+        except (json.JSONDecodeError, TypeError):
+            return {
+                "subject": f"Special Offer: {campaign_type}",
+                "body": response.content,
+                "cta": "Click Here",
+            }
 
 
 ai_agent = AIAgent()

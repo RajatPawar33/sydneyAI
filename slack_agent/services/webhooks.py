@@ -55,18 +55,42 @@ async def mailgun_webhook(
 
     return {"status": "ok"}
 
+@router.post("/sendgrid")
+async def sendgrid_webhook(request: Request):
+    data = await request.json()
+
+    for event in data:
+        event_type = event.get("event", "")
+
+        if event_type not in TRACKED_EVENTS:
+            continue
+
+        await _process_event(event_type, event)
+
+    return {"status": "ok"}
 
 async def _process_event(event_type: str, data: Dict[str, Any]):
-    # extract common fields
-    recipient = data.get("recipient", "")
-    message_id = (
-        (data.get("message", {}) or {}).get("headers", {}).get("message-id", "")
-    )
-    timestamp = datetime.fromtimestamp(float(data.get("timestamp", 0)))
-    tags = data.get("tags", [])
+    # 1. Extract recipient: SendGrid uses the key "email"
+    recipient = data.get("email", data.get("recipient", "unknown"))
 
-    # campaign_id is stored as the first tag on every send
-    campaign_id = tags[0] if tags else None
+    # 2. Extract Message ID: SendGrid uses "sg_message_id"
+    message_id = data.get("sg_message_id", "unknown")
+
+    # 3. Handle Timestamp
+    timestamp = datetime.fromtimestamp(float(data.get("timestamp", 0)))
+
+    # 4. Extract campaign_id from Custom Args
+    
+    campaign_id = None
+    for key, value in data.items():
+        if key.startswith("tag_"):
+            campaign_id = value
+            break
+
+    # If not found via prefix, check for a direct "campaign_id" or "tags" fallback
+    if not campaign_id:
+        tags = data.get("tags", [])
+        campaign_id = tags[0] if isinstance(tags, list) and tags else data.get("campaign_id")
 
     event_doc = {
         "event_type": event_type,
@@ -74,16 +98,17 @@ async def _process_event(event_type: str, data: Dict[str, Any]):
         "message_id": message_id,
         "campaign_id": campaign_id,
         "timestamp": timestamp,
-        "raw": data,
+        "raw": data, # Keeps the full SendGrid payload for debugging
     }
 
-    # persist event
+    # Persist event to the audit log
     await db_service.db.email_events.insert_one(event_doc)
 
-    # update campaign-level counters in one atomic op
+    # 5. Update campaign-level counters in the 'campaigns' collection
     if campaign_id:
         increment_field = _event_to_counter(event_type)
         if increment_field:
+            # Matches the 'id' field in your campaigns collection screenshot
             await db_service.db.campaigns.update_one(
                 {"id": campaign_id},
                 {
@@ -91,8 +116,6 @@ async def _process_event(event_type: str, data: Dict[str, Any]):
                     "$set": {"stats.updated_at": datetime.now()},
                 },
             )
-
-
 def _event_to_counter(event_type: str) -> str | None:
     mapping = {
         "delivered": "delivered",

@@ -1,8 +1,6 @@
 import json
+import requests
 from typing import Dict, List
-
-from langchain_core.messages import HumanMessage
-from langchain_openai import ChatOpenAI
 
 from slack_agent.config.settings import settings
 from slack_agent.models.schemas import InfluencerCampaign, InfluencerProfile
@@ -10,17 +8,32 @@ from slack_agent.models.schemas import InfluencerCampaign, InfluencerProfile
 
 class InfluencerScorer:
     """
-    ai-powered scoring to match influencers to product/campaign
-    assigns 0-1 relevance score and filters out bad fits
+    AI-powered scoring using Ollama (llama3:8b)
     """
 
     def __init__(self):
-        self.llm = ChatOpenAI(
-            model=settings.openai_model,
-            temperature=0.2,  # low temp — scoring should be deterministic
-            max_tokens=500,
-            api_key=settings.openai_api_key,
-        )
+        self.base_url = settings.ollama_base_url
+        self.model = settings.ollama_model
+
+   
+    async def _call_llm(self, prompt: str) -> str:
+        try:
+            response = requests.post(
+                f"{self.base_url}/api/generate",
+                json={
+                    "model": self.model,
+                    "prompt": prompt,
+                    "stream": False,
+                    "options": {
+                        "temperature": 0.2,
+                        "num_predict": 500,
+                    },
+                },
+                timeout=60,
+            )
+            return response.json().get("response", "")
+        except Exception:
+            return ""
 
     async def score_batch(
         self,
@@ -28,11 +41,10 @@ class InfluencerScorer:
         campaign: InfluencerCampaign,
         min_score: float = 0.5,
     ) -> List[InfluencerProfile]:
-        # score all influencers and return filtered + sorted list
+
         scored = []
 
         for inf in influencers:
-            # hard filter first — no api cost
             if not self._passes_hard_filters(inf, campaign):
                 continue
 
@@ -43,7 +55,6 @@ class InfluencerScorer:
             if score >= min_score:
                 scored.append(inf)
 
-        # sort by score descending
         scored.sort(key=lambda x: x.relevance_score or 0, reverse=True)
         return scored
 
@@ -52,15 +63,13 @@ class InfluencerScorer:
         inf: InfluencerProfile,
         campaign: InfluencerCampaign,
     ) -> bool:
-        # follower count
+
         if inf.followers < campaign.min_followers:
             return False
 
-        # tier filter
         if campaign.target_tiers and inf.tier not in campaign.target_tiers:
             return False
 
-        # engagement rate filter
         if (
             campaign.min_engagement_rate
             and inf.engagement_rate is not None
@@ -68,7 +77,6 @@ class InfluencerScorer:
         ):
             return False
 
-        # platform filter
         if campaign.target_platforms and inf.platform not in campaign.target_platforms:
             return False
 
@@ -79,40 +87,44 @@ class InfluencerScorer:
         inf: InfluencerProfile,
         campaign: InfluencerCampaign,
     ) -> float:
-        prompt = f"""you are an influencer marketing expert
-score this influencer for the given product campaign on a scale of 0.0 to 1.0
 
-product: {campaign.product_name}
-product description: {campaign.product_description}
-target niche: {campaign.target_niche}
+        prompt = f"""
+You are an influencer marketing expert.
 
-influencer:
-- platform: {inf.platform}
-- name: {inf.name}
-- bio: {inf.bio or "not available"}
-- followers: {inf.followers:,}
-- engagement rate: {inf.engagement_rate or "unknown"}
-- topics: {", ".join(inf.tags) if inf.tags else "unknown"}
-- country: {inf.country or "unknown"}
+Score this influencer from 0.0 to 1.0.
 
-scoring criteria:
-- niche relevance to product (40%)
-- audience size fit for campaign tier (20%)
-- engagement quality (20%)
-- content authenticity signals from bio (20%)
+Product: {campaign.product_name}
+Description: {campaign.product_description}
+Target niche: {campaign.target_niche}
 
-respond ONLY with a json object:
-{{"score": 0.0, "reason": "brief reason under 20 words"}}"""
+Influencer:
+- Platform: {inf.platform}
+- Name: {inf.name}
+- Bio: {inf.bio or "N/A"}
+- Followers: {inf.followers}
+- Engagement: {inf.engagement_rate or "unknown"}
+- Topics: {", ".join(inf.tags) if inf.tags else "unknown"}
+- Country: {inf.country or "unknown"}
+
+Return ONLY JSON:
+{{"score": 0.0}}
+"""
 
         try:
-            response = await self.llm.ainvoke([HumanMessage(content=prompt)])
-            text = response.content.strip()
-            # strip any markdown fences
-            text = text.replace("```json", "").replace("```", "").strip()
-            data = json.loads(text)
+            text = await self._call_llm(prompt)
+
+            cleaned = (
+                text.replace("```json", "")
+                .replace("```", "")
+                .strip()
+            )
+
+            data = json.loads(cleaned)
+
             return max(0.0, min(1.0, float(data.get("score", 0.0))))
+
         except Exception as e:
-            print(f"scoring error for {inf.handle}: {e}")
+            print(f"Scoring error for {inf.name}: {e}")
             return 0.0
 
     async def suggest_keywords_for_product(
@@ -121,37 +133,35 @@ respond ONLY with a json object:
         product_description: str,
         platforms: List[str],
     ) -> Dict[str, List[str]]:
-        # generate search keywords and hashtags per platform from product info
-        prompt = f"""given this product, suggest search terms to find relevant influencers
 
-product: {product_name}
-description: {product_description}
-platforms: {", ".join(platforms)}
+        prompt = f"""
+Suggest influencer search keywords.
 
-respond ONLY with json:
+Product: {product_name}
+Description: {product_description}
+Platforms: {", ".join(platforms)}
+
+Return JSON:
 {{
-  "youtube_keywords": ["keyword1", "keyword2", ...],
-  "instagram_hashtags": ["hashtag1", "hashtag2", ...]
+  "youtube_keywords": [],
+  "instagram_hashtags": []
 }}
-
-rules:
-- youtube_keywords: 5-8 niche channel search terms (no hashtags)
-- instagram_hashtags: 8-12 hashtags without # symbol
-- focus on niche content creators not just product category"""
+"""
 
         try:
-            response = await self.llm.ainvoke([HumanMessage(content=prompt)])
-            text = (
-                response.content.strip()
-                .replace("```json", "")
+            text = await self._call_llm(prompt)
+
+            cleaned = (
+                text.replace("```json", "")
                 .replace("```", "")
                 .strip()
             )
-            return json.loads(text)
+
+            return json.loads(cleaned)
+
         except Exception:
-            # fallback
             return {
-                "youtube_keywords": [product_name, f"{product_name} review"],
+                "youtube_keywords": [product_name],
                 "instagram_hashtags": [product_name.lower().replace(" ", "")],
             }
 

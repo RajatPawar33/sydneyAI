@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import Dict, List, Optional
-
+from bson import ObjectId
 from slack_agent.core.agent import ai_agent
 from slack_agent.models.schemas import (
     DateRangeQuery,
@@ -95,28 +95,46 @@ class OutreachTool:
                 run_date=scheduled_at,
                 kwargs={"campaign_id": campaign_id},
             )
-
+        else:
+            await self._send_campaign(campaign_id)
         return campaign_id
 
     async def _send_campaign(self, campaign_id: str):
         # tag == campaign_id so webhook events and stats can be queried by it
         campaign = await db_service.get_campaign(campaign_id)
         if not campaign:
+            print(f"Campaign {campaign_id} not found in database.")
             return
 
         recipients = [EmailRecipient(**r) for r in campaign["recipients"]]
 
+        # Trigger the bulk send via SendGrid
         results = await mailgun_client.send_bulk(
             recipients=recipients,
             subject=campaign["subject"],
             body_template=campaign["body"],
+            html_template=campaign["body"],
             tags=[campaign_id],
         )
 
-        # update campaign status
+        # Log errors to console for debugging SendGrid dashboard issues
+        if results.get("failed", 0) > 0:
+            print(f"SendGrid Bulk Send Errors for Campaign {campaign_id}:")
+            for error in results.get("errors", []):
+                print(f"  - {error}")
+
+        # Determine final status based on results
+        # If any emails were sent successfully, mark as sent; otherwise, mark as failed
+        final_status = "sent" if results.get("sent", 0) > 0 else "failed"
+
+        # update campaign status in database
         await db_service.update_campaign_status(
-            campaign_id=campaign_id, status="sent", sent_count=results["sent"]
+            campaign_id=campaign_id, 
+            status=final_status, 
+            sent_count=results.get("sent", 0)
         )
+        
+        print(f"✓ Campaign {campaign_id} processed. Status: {final_status}. Sent: {results.get('sent', 0)}")
 
 
 class SchedulingTool:
@@ -124,7 +142,7 @@ class SchedulingTool:
         self, platform: str, content: str, link: Optional[str] = None
     ) -> Dict:
         # post immediately without scheduling
-        from services.social_media_manager import social_media_manager
+        from slack_agent.services.social_media_manager import social_media_manager
 
         # save to database
         post = SocialMediaPost(
@@ -145,7 +163,7 @@ class SchedulingTool:
         # update status
         status = "published" if result.get("success") else "failed"
         await db_service.db.social_posts.update_one(
-            {"_id": post_id},
+            {"_id": ObjectId(post_id)},
             {
                 "$set": {
                     "status": status,
@@ -240,9 +258,9 @@ class SchedulingTool:
 
     async def _publish_post(self, post_id: str):
         # get post from database
-        from services.social_media_manager import social_media_manager
+        from slack_agent.services.social_media_manager import social_media_manager
 
-        post = await db_service.db.social_posts.find_one({"_id": post_id})
+        post = await db_service.db.social_posts.find_one({"_id": ObjectId(post_id)})
         if not post:
             return
 
@@ -254,7 +272,7 @@ class SchedulingTool:
         # update post status
         status = "published" if result.get("success") else "failed"
         await db_service.db.social_posts.update_one(
-            {"_id": post_id},
+            {"_id": ObjectId(post_id)},
             {
                 "$set": {
                     "status": status,
@@ -272,22 +290,29 @@ class SchedulingTool:
 
 class SocialMediaTool:
     async def generate_post_content(
-        self, platform: str, topic: str, tone: str = "professional"
-    ) -> str:
+    self, platform: str, topic: str, tone: str = "professional"
+) -> str:
+    # MODIFIED PROMPT: Added strict output instructions
         prompt = f"""generate {platform} post about: {topic}
-tone: {tone}
-requirements:
-- engaging and concise
-- include relevant hashtags
-- call to action
-- platform-appropriate length"""
+            tone: {tone}
+            requirements:
+            - engaging and concise
+            - include relevant hashtags
+            - call to action
+            - platform-appropriate length
 
-        # use ai to generate
+            STRICT INSTRUCTION: 
+            Return ONLY the post text and hashtags. 
+            DO NOT include any introductory text, labels like 'Here is a post', or summary bullet points at the end.
+            Output should be ready to post immediately.
+            DO NOT include any explanations or notes or additional commentary."""
+
+                # use ai to generate
         from langchain_core.messages import HumanMessage
-
         response = await ai_agent.llm.ainvoke([HumanMessage(content=prompt)])
 
-        return response.content
+        # Stripping whitespace to ensure a clean start/end
+        return response.content.strip()
 
     async def get_scheduled_posts(self, platform: Optional[str] = None) -> List[Dict]:
         return await db_service.get_scheduled_posts(platform)

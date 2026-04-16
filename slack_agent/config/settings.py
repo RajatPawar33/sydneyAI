@@ -5,7 +5,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env", env_file_encoding="utf-8", case_sensitive=False, extra="ignore"
+        env_file=r".env.example", env_file_encoding="utf-8", case_sensitive=False, extra="ignore"
     )
     port: int = 8000
 
@@ -15,11 +15,10 @@ class Settings(BaseSettings):
     slack_signing_secret: str
     bot_user_id: str
 
-    # openai credentials
-    openai_api_key: str
-    openai_model: str = "gpt-4o-mini"
-    openai_temperature: float = 0.7
-    openai_max_tokens: int = 1000
+    ollama_base_url: str = "http://localhost:11434"
+    ollama_model: str = "llama3:8b"
+    ollama_temperature: float = 0.7
+    ollama_max_tokens: int = 1000
 
     # redis config
     redis_host: str = "localhost"
@@ -31,11 +30,16 @@ class Settings(BaseSettings):
     mongodb_db_name: str = "sydney"
 
     # mailgun config
-    mailgun_api_key: Optional[str] = None
-    mailgun_domain: Optional[str] = None
-    mailgun_from_email: Optional[str] = None
-    mailgun_from_name: str = "Sydney Bot"
-    mailgun_webhook_signing_key: Optional[str] = None
+    # mailgun_api_key: Optional[str] = None
+    # mailgun_domain: Optional[str] = None
+    # mailgun_from_email: Optional[str] = None
+    # mailgun_from_name: str = "Sydney Bot"
+    # mailgun_webhook_signing_key: Optional[str] = None
+
+# SendGrid config (Replacing Mailgun)
+    sendgrid_api_key: Optional[str] = None
+    sendgrid_from_email: Optional[str] = None
+    sendgrid_from_name: str = "Sydney Bot"
 
     # youtube data api
     youtube_api_key: Optional[str] = None
@@ -56,8 +60,8 @@ class Settings(BaseSettings):
     twitter_bearer_token: Optional[str] = None
 
     # linkedin config
-    linkedin_access_token: Optional[str] = None
-    linkedin_person_id: Optional[str] = None
+    linkedin_access_token: Optional[str] ='AQXCtS-JohtjgsoYBcbomwmAaQBnFfBbWnq_VDkn4QxQEbjbJjTpsL9UGLHC1UBJUwlo7EBFhG-2IOllMFZNnS6_koNeRX3xbdgqqT3Vr-LMjQ6z5J3ktHW0sEmYzrxgPP6ZmQK_hU-oQ7Gs5PlJmRtB3GHnJ7ZNx9LY1ZImg-R8CMAR7kPOG7MjyUAGy2FOP37PwNp8x50GHtCDj3QwHqg6y--bLOExAr8ezpo6lZp9kNLNw8uOsWG4JpDKJMdWwTfAxu9nx2iRbCaLcVbxyeFaI7As_2VOXhMv9jg7PbNTjT2JVMeIzztVS0CE8b8FzTE9OxP6Ub_0TWtMKrpzJpdD4fFo9w'
+    linkedin_person_id: Optional[str] = 'urn:li:person:rGDKZlW1KJ'
 
     # facebook config
     facebook_access_token: Optional[str] = None
@@ -74,7 +78,7 @@ class Settings(BaseSettings):
     show_typing_indicator: bool = True
 
     # scheduler settings
-    scheduler_timezone: str = "UTC"
+    scheduler_timezone: str = "Asia/Kolkata"
 
     # rate limiting
     rate_limit_per_user: int = 10

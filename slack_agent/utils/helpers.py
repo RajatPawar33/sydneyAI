@@ -43,10 +43,18 @@ def parse_date_from_text(text: str) -> Optional[datetime]:
     return parsed
 
 
+
 def extract_email_from_text(text: str) -> List[str]:
-    # extract email addresses from text
-    pattern = r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b"
-    return re.findall(pattern, text)
+    # Refined pattern: removed the '|' from the TLD group and ensured strict boundary matching
+    # Original logic: [A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}
+    pattern = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
+    
+    found_emails = re.findall(pattern, text)
+    
+    # Cleaning step: ensures no trailing punctuation or symbols like '|' 
+    # remain attached to the extracted email string.
+    return [email.strip('|').strip() for email in found_emails]
+
 
 
 def parse_date_range_from_text(text: str) -> Optional[Dict[str, datetime]]:

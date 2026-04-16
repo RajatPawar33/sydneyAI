@@ -46,6 +46,7 @@ class SlackHandler:
 
     async def handle_mention(self, event: Dict, say, client):
         try:
+            
             user_id = event["user"]
             channel_id = event["channel"]
             text = event["text"]
@@ -94,9 +95,12 @@ class SlackHandler:
             )
 
         except Exception as e:
-            print(f"error handling mention: {e}")
+            import traceback
+            print("🔥 ERROR HANDLING MENTION:")
+            traceback.print_exc()
             await say(
-                text=f"error: {str(e)}", thread_ts=event.get("thread_ts", event["ts"])
+                text="Something went wrong ❌",
+                thread_ts=event.get("thread_ts", event["ts"]),
             )
 
     async def handle_direct_message(self, message: Dict, say, client):
@@ -196,7 +200,7 @@ class SlackHandler:
         self, text: str, user_info: Dict, channel_info: Dict, conv_history: list
     ) -> str:
         # route intent using ai agent instead of keyword matching
-        routing = await route_intent(text, user_info, conv_history)
+        routing = await route_intent(text, conv_history)
         intent = routing.intent
         params = routing.params
 
@@ -307,7 +311,7 @@ say "generate promotional email for [topic]" to continue"""
                 if not scheduled_at:
                     return "couldn't parse schedule time, please specify (e.g., 'tomorrow 3pm') or say 'post now'"
 
-            from services.social_media_manager import social_media_manager
+            from slack_agent.services.social_media_manager import social_media_manager
 
             content = await social_media_tool.generate_post_content(
                 platform=platforms[0],
@@ -367,15 +371,9 @@ post will be published automatically at scheduled time"""
         self, text: str, user_info: Dict, params: Dict
     ) -> str:
         try:
-            # get cached recipients
-            cached = await cache_service.get(f"recipients:{user_info['id']}")
-            if not cached:
-                return "no recipients cached, please collect emails first"
-
-            recipients = [EmailRecipient(**r) for r in cached]
-
             # use ai-extracted topic if available
             topic = params.get("topic", text)
+            
 
             campaign_content = await outreach_tool.generate_campaign_content(
                 campaign_type="promotional",
@@ -383,36 +381,72 @@ post will be published automatically at scheduled time"""
                 target_audience="existing customers",
             )
 
-            scheduled_at = None
-            if params.get("scheduled"):
-                scheduled_at = parse_date_from_text(params["scheduled"])
-            else:
-                scheduled_at = parse_date_from_text(text)
+            # Check if emails are provided in params (from router)
+            emails = params.get("emails", [])
 
+            if emails:
+                recipients = [
+                    EmailRecipient(email=email, name=email.split("@")[0])
+                    for email in emails
+                ]
+            else:
+                cached = await cache_service.get(f"recipients:{user_info['id']}")
+
+                if not cached:
+                    return f"""📧 *Generated Campaign Preview*
+                    *Subject:* {campaign_content["subject"]}
+                    *Body:* {campaign_content["body"]}
+                    *CTA:* {campaign_content["cta"]}
+
+                    ⚠️ No recipients found. Please provide emails or collect them first."""
+                
+                recipients = [EmailRecipient(**r) for r in cached]
+
+            # --- IMPROVED SCHEDULING LOGIC ---
+            scheduled_at = None
+            scheduled_val = params.get("scheduled")
+            
+            # Check if the user specifically requested "now" or immediate send
+            is_immediate = any(word in text.lower() for word in ["now", "immediately", "right away"])
+
+            if not is_immediate:
+                if isinstance(scheduled_val, str) and scheduled_val.strip():
+                    scheduled_at = parse_date_from_text(scheduled_val)
+                else:
+                    scheduled_at = parse_date_from_text(text)
+            
             # create campaign
             campaign_id = await outreach_tool.create_campaign(
-                title=f"campaign_{datetime.now().strftime('%Y%m%d')}",
+                title=f"campaign_{datetime.now().strftime('%Y%m%d_%H%M')}",
                 recipients=recipients,
                 subject=campaign_content["subject"],
                 body=campaign_content["body"],
                 scheduled_at=scheduled_at,
             )
 
-            status = "scheduled" if scheduled_at else "ready to send"
+            if scheduled_at:
+                status = "scheduled"
+                time_info = f"scheduled: {scheduled_at.strftime('%Y-%m-%d %H:%M')}"
+            else:
+                # If scheduled_at is None, tool should send immediately
+                status = "sent"
+                time_info = "sent: immediately"
 
             return f"""campaign created ✓
 campaign id: {campaign_id}
-recipients: {len(recipients)}
+recipients: {(recipients)}
 status: {status}
-{f"scheduled: {scheduled_at.strftime('%Y-%m-%d %H:%M')}" if scheduled_at else ""}
+{time_info}
 
 subject: {campaign_content["subject"]}
 
-reply "send now" to send immediately or "preview" to see full email"""
+reply "preview" to see full email content"""
 
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             return f"error creating campaign: {str(e)}"
-
+        
     async def _handle_influencer_command(
         self, text: str, user_info: Dict, params: Dict
     ) -> str:
@@ -600,7 +634,7 @@ examples:
 
     async def _handle_check_accounts(self) -> str:
         # check which social media accounts are configured
-        from services.social_media_manager import social_media_manager
+        from slack_agent.services.social_media_manager import social_media_manager
 
         platforms = ["twitter", "linkedin", "facebook", "instagram"]
         validation = await social_media_manager.validate_platforms(platforms)

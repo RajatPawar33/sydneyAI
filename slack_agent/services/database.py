@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import Any, Dict, List, Optional
-
+from bson import ObjectId   
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 
 from slack_agent.config.settings import settings
@@ -51,13 +51,13 @@ class DatabaseService:
         return str(result.inserted_id)
 
     async def get_campaign(self, campaign_id: str) -> Optional[Dict]:
-        return await self.db.campaigns.find_one({"id": campaign_id})
-
+        campaign = await self.db.campaigns.find_one({"_id": ObjectId(campaign_id)})
+        return campaign
     async def update_campaign_status(
         self, campaign_id: str, status: str, sent_count: int = 0
     ):
         await self.db.campaigns.update_one(
-            {"id": campaign_id},
+            {"_id": campaign_id},
             {
                 "$set": {
                     "status": status,
