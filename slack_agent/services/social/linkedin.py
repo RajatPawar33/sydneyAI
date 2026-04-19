@@ -5,12 +5,23 @@ from config.settings import settings
 
 
 class LinkedInClient:
-   
 
     def __init__(self):
         self.access_token = getattr(settings, "linkedin_access_token", None)
         self.person_id = getattr(settings, "linkedin_person_id", None)
         self.base_url = "https://api.linkedin.com/v2"
+
+        if not self.access_token:
+            raise ValueError("LinkedIn access token missing")
+
+        if not self.person_id:
+            raise ValueError("LinkedIn person ID missing")
+
+        if not self.person_id.startswith("urn:li:member:"):
+            raise ValueError(
+                f"Invalid LinkedIn person URN: {self.person_id} "
+                "(Expected format: urn:li:member:<id>)"
+            )
 
     def _get_headers(self) -> Dict[str, str]:
         return {
@@ -20,48 +31,57 @@ class LinkedInClient:
         }
 
     async def create_post(self, text: str) -> Dict:
-    
-        if not self.access_token or not self.person_id:
-            raise ValueError("linkedin credentials not configured")
-
-        # max 3000 chars for linkedin
+        
         if len(text) > 3000:
             text = text[:2997] + "..."
-        payload = {
-    "author": f"urn:li:person:{self.person_id}",
-    "lifecycleState": "PUBLISHED",
-    
-    "specificContent": {
-        "com.linkedin.ugc.ShareContent": {
-            "shareCommentary": {"text": text},
-            "shareMediaCategory": "NONE",
-        }
-    },
-    "visibility": {"com.linkedin.ugc.MemberNetworkVisibility": "PUBLIC"},
-}
 
-        
+        payload = {
+            "author": self.person_id,  
+            "lifecycleState": "PUBLISHED",
+            "specificContent": {
+                "com.linkedin.ugc.ShareContent": {
+                    "shareCommentary": {"text": text},
+                    "shareMediaCategory": "NONE",
+                }
+            },
+            "visibility": {
+                "com.linkedin.ugc.MemberNetworkVisibility": "PUBLIC"
+            },
+        }
+
+       
+        print("Posting to LinkedIn with author:", self.person_id)
 
         async with httpx.AsyncClient() as client:
             response = await client.post(
-                f"{self.base_url}/ugcPosts", headers=self._get_headers(), json=payload
+                f"{self.base_url}/ugcPosts",
+                headers=self._get_headers(),
+                json=payload,
             )
 
             if response.status_code == 201:
                 post_id = response.headers.get("X-RestLi-Id")
-                return {"success": True, "post_id": post_id, "text": text}
+                return {
+                    "success": True,
+                    "post_id": post_id,
+                    "text": text,
+                }
             else:
-                return {"success": False, "error": response.text}
+                return {
+                    "success": False,
+                    "status_code": response.status_code,
+                    "error": response.text,
+                }
 
     async def create_post_with_link(
         self, text: str, link_url: str, link_title: str = ""
     ) -> Dict:
-        # post with link preview
-        if not self.access_token or not self.person_id:
-            raise ValueError("linkedin credentials not configured")
+        """
+        Create a post with a link preview
+        """
 
         payload = {
-            "author": f"urn:li:person:{self.person_id}",
+            "author": self.person_id,  
             "lifecycleState": "PUBLISHED",
             "specificContent": {
                 "com.linkedin.ugc.ShareContent": {
@@ -76,24 +96,39 @@ class LinkedInClient:
                     ],
                 }
             },
-            "visibility": {"com.linkedin.ugc.MemberNetworkVisibility": "PUBLIC"},
+            "visibility": {
+                "com.linkedin.ugc.MemberNetworkVisibility": "PUBLIC"
+            },
         }
 
         async with httpx.AsyncClient() as client:
             response = await client.post(
-                f"{self.base_url}/ugcPosts", headers=self._get_headers(), json=payload
+                f"{self.base_url}/ugcPosts",
+                headers=self._get_headers(),
+                json=payload,
             )
 
             if response.status_code == 201:
                 post_id = response.headers.get("X-RestLi-Id")
-                return {"success": True, "post_id": post_id, "text": text}
+                return {
+                    "success": True,
+                    "post_id": post_id,
+                    "text": text,
+                }
             else:
-                return {"success": False, "error": response.text}
+                return {
+                    "success": False,
+                    "status_code": response.status_code,
+                    "error": response.text,
+                }
 
     async def get_profile(self) -> Optional[Dict]:
+        
+
         async with httpx.AsyncClient() as client:
             response = await client.get(
-                f"{self.base_url}/me", headers=self._get_headers()
+                f"{self.base_url}/me",
+                headers=self._get_headers(),
             )
 
             print("LinkedIn /me status:", response.status_code)
@@ -101,8 +136,8 @@ class LinkedInClient:
 
             if response.status_code == 200:
                 return response.json()
-            return None
 
+            return None
 
 
 linkedin_client = LinkedInClient()
