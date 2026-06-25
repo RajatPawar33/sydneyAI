@@ -14,10 +14,16 @@ from slack_agent.services.email import mailgun_client
 from slack_agent.services.scheduler import scheduler_service
 from slack_agent.services.shopify import shopify_service
 import json
-from langchain_core.messages import HumanMessage
-from slack_agent.core.agent import ai_agent
-from slack_agent.services.shopify import shopify_service
+from slack_agent.config.settings import settings
+import base64
+import json
+import logging
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import SystemMessage, HumanMessage
+from openai import AsyncOpenAI
 
+
+logger = logging.getLogger(__name__)
 class OutreachTool:
     async def collect_customer_emails(
         self,
@@ -79,6 +85,7 @@ class OutreachTool:
         subject: str,
         body: str,
         scheduled_at: Optional[datetime] = None,
+        product_info: Optional[Dict] = None,  # Added parameter to hold the tracking metrics
     ) -> str:
         campaign = OutreachCampaign(
             title=title,
@@ -88,7 +95,11 @@ class OutreachTool:
             scheduled_at=scheduled_at,
         )
 
-        campaign_id = await db_service.save_campaign(campaign.dict())
+        campaign_dict = campaign.dict()
+        # Inject the product tracking data directly into the DB document dictionary
+        campaign_dict["product_info"] = product_info 
+
+        campaign_id = await db_service.save_campaign(campaign_dict)
 
         # schedule if needed
         if scheduled_at:
@@ -110,48 +121,71 @@ class OutreachTool:
 
         recipients = [EmailRecipient(**r) for r in campaign["recipients"]]
         raw_body_template = campaign["body"]
+        product_info = campaign.get("product_info")
+
+        NGROK_BASE_URL = "https://gooey-morphine-swiftly.ngrok-free.dev"
+        STORE_BASE_URL = "https://sydney-store-eight.vercel.app"
 
         total_sent = 0
         errors = []
 
-        # TEMPORARY DEVELOPMENT CONFIGURATION FOR TESTING
-        temporary_destination_url = "https://en.wikipedia.org/wiki/Artificial_intelligence"
-        product_title = "Test AI Puffer Jacket"
-        product_type = "Outerwear"
-        product_tags = ["Testing", "Winter"]
-        
-        # Replace this string with your active public forwarding address when you run ngrok
-        ngrok_base_url = " https://gooey-morphine-swiftly.ngrok-free.dev" 
-
         for recipient in recipients:
-            if not recipient.name or recipient.name == recipient.email.split("@")[0]:
+            if not recipient.name or "@" in recipient.name or recipient.name == recipient.email.split("@")[0]:
                 display_name = "Customer"
             else:
                 display_name = recipient.name
-
-            # Build the custom query string targeting your local FastAPI via ngrok
-            tracked_link = (
-                f"{ngrok_base_url}/track/click"
-                f"?email={recipient.email}"
-                f"&name={display_name}"
-                f"&campaign_id={campaign_id}"
-                f"&product_title={product_title}"
-                f"&product_type={product_type}"
-                f"&redirect_url={temporary_destination_url}"
-            )
-            for tag in product_tags:
-                tracked_link += f"&product_tags={tag}"
-
-            # Swap placeholders inside the raw template string
+            
             personalized_body = raw_body_template.replace("{{name}}", display_name)
-            personalized_body = personalized_body.replace("{{product_url}}", tracked_link)
+            cta_html = ""
 
-            # Send via SendGrid
+            if product_info and product_info.get("id"):
+                prod_id = str(product_info.get("id"))
+                prod_title = product_info.get("title", "Product")
+                prod_type = product_info.get("product_type", "")
+
+                raw_tags = product_info.get("tags", [])
+                if isinstance(raw_tags, str):
+                    prod_tags = [t.strip() for t in raw_tags.split(",") if t.strip()]
+                else:
+                    prod_tags = raw_tags
+
+                query_string = (
+                    f"?email={recipient.email}"
+                    f"&name={display_name}"
+                    f"&campaign_id={campaign_id}"
+                    f"&product_title={prod_title}"
+                    f"&product_type={prod_type}"
+                    f"&product_id={prod_id}"
+                )
+                for tag in prod_tags:
+                    query_string += f"&product_tags={tag}"
+
+                tracking_link = f"{NGROK_BASE_URL}/webhooks/track/click{query_string}"
+
+                cta_html = f"""
+                <div style="text-align: center; margin: 30px 0 10px 0;">
+                    <a href="{tracking_link}" style="background-color: #4f46e5; color: white; padding: 14px 28px; text-decoration: none; border-radius: 8px; font-weight: bold; display: inline-block; font-family: sans-serif; font-size: 16px;">
+                        View {prod_title} on Store &rarr;
+                    </a>
+                </div>
+                """
+
+            email_html_wrapper = f"""
+            <div style="background-color: #f9fafb; padding: 40px 20px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+                <div style="max-width: 600px; margin: 0 auto; background-color: #ffffff; padding: 35px; border-radius: 12px; box-shadow: 0 4px 10px rgba(0, 0, 0, 0.04);">
+                    <div style="color: #333333; font-size: 16px; line-height: 1.6;">
+                        {personalized_body}
+                    </div>
+                    {cta_html}
+                </div>
+            </div>
+            """
+
             result = await mailgun_client.send_bulk(
                 recipients=[recipient],
                 subject=campaign["subject"],
                 body_template=personalized_body,
-                html_template=personalized_body,
+                html_template=email_html_wrapper,
                 tags=[campaign_id],
             )
             total_sent += result.get("sent", 0)
@@ -159,57 +193,8 @@ class OutreachTool:
                 errors.extend(result["errors"])
 
         final_status = "sent" if total_sent > 0 else "failed"
-        await db_service.update_campaign_status(
-            campaign_id=campaign_id, 
-            status=final_status, 
-            sent_count=total_sent
-        )
-    # async def _send_campaign(self, campaign_id: str):
-    #     campaign = await db_service.get_campaign(campaign_id)
-    #     if not campaign:
-    #         print(f"Campaign {campaign_id} not found in database.")
-    #         return
-
-    #     recipients = [EmailRecipient(**r) for r in campaign["recipients"]]
-    #     raw_body_template = campaign["body"]
-
-    #     # Track tracking results
-    #     total_sent = 0
-    #     errors = []
-
-    #     # Loop through recipients to format personalized fallback salutations
-    #     for recipient in recipients:
-           
-    #         if not recipient.name or recipient.name == recipient.email.split("@")[0]:
-    #             display_name = "Customer"
-    #         else:
-    #             display_name = recipient.name
-
-    #         # Dynamically replace the structured token variable inside the template
-    #         personalized_body = raw_body_template.replace("{{name}}", display_name)
-
-    #         # If Mailgun send_bulk tool supports single-recipient parameters, use it.
-    #         # Otherwise, execute personalized delivery calls:
-    #         result = await mailgun_client.send_bulk(
-    #             recipients=[recipient],
-    #             subject=campaign["subject"],
-    #             body_template=personalized_body,
-    #             html_template=personalized_body,
-    #             tags=[campaign_id],
-    #         )
-    #         total_sent += result.get("sent", 0)
-    #         if result.get("errors"):
-    #             errors.extend(result["errors"])
-
-    #     final_status = "sent" if total_sent > 0 else "failed"
-
-    #     await db_service.update_campaign_status(
-    #         campaign_id=campaign_id, 
-    #         status=final_status, 
-    #         sent_count=total_sent
-    #     )
-        
-    #     print(f"✓ Campaign {campaign_id} processed. Status: {final_status}. Sent: {total_sent}")
+        await db_service.update_campaign_status(campaign_id=campaign_id, status=final_status, sent_count=total_sent)
+        print(f"✓ Campaign {campaign_id} processed. Status: {final_status}. Sent: {total_sent}")
 
 class SchedulingTool:
     async def post_now(
@@ -440,7 +425,88 @@ class ProductAmbiguityResolver:
         return next((p for p in products if p["id"] == matched_data["id"]), None)
 
 
+class PosterTool:
+    def __init__(self):
+        self.image_client = AsyncOpenAI(api_key=settings.openai_api_key)
+        self.llm_client = ChatOpenAI(
+            model=settings.openai_model,
+            api_key=settings.openai_api_key,
+            temperature=0.7,
+        )
+
+    async def _optimize_prompt_with_context(self, user_prompt: str, prod_details_json: str) -> str:
+        try:
+            product_data = json.loads(prod_details_json)
+            if not product_data:
+                return user_prompt
+        except Exception:
+            return user_prompt
+
+        
+        system_prompt = """
+You are an expert ecommerce creative director. The Shopify product data is the PRIMARY source of truth. You MUST design an image prompt for a commercial advertising poster that integrates textual elements.
+
+Requirements:
+- The product must remain the central focus, taking up most of the frame.
+- Explicitly dictate that the image must be an authentic magazine advertisement layout or promotional poster, NOT a generic lifestyle snapshot.
+- TEXT RENDERING: Force the graphic model to overlay text directly into the poster layout using clean typographic structures. 
+- Content to overlay as typography elements inside the design:
+  1. The exact product title as a prominent, bold display header.
+  2. Choose 2 key product feature tags or technical specifications from the context (e.g., "700-Fill Power", "Windproof Ripstop", or "Sustainable Denim") and place them cleanly in small, modern sans-serif callout fonts along the bottom or side margin.
+- TEXT STYLE: Specify that all typography must use clean modern fonts, sharp readability, and contrasting text colors that mesh elegantly with the composition background. Avoid generic scrambled lettering.
+- Highlight visual materials, texture, craftsmanship, and the product's target luxury niche environment.
+
+Return only the finalized description string to pass straight into the image generator.
+"""
+
+        user_message = f"""
+Shopify Product Data Context: {json.dumps(product_data, indent=2)}
+User's Original Poster Request: "{user_prompt}"
+
+Generate only the optimized, highly-descriptive image prompt string:
+"""
+        try:
+            response = await self.llm_client.ainvoke([
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=user_message)
+            ])
+            return response.content.strip()
+        except Exception as e:
+            logger.error(f"Failed to optimize image prompt: {e}")
+            return user_prompt
+
+    async def generate_poster(self, prompt: str, aspect_ratio: str = "portrait", prod_details: str = "{}") -> Optional[bytes]:
+        try:
+            ratio_mapping = {
+                "square": "1024x1024",
+                "landscape": "1792x1024",
+                "portrait": "1024x1792"
+            }
+            size_dimension = ratio_mapping.get(aspect_ratio.lower(), "1024x1792")
+            optimized_prompt = await self._optimize_prompt_with_context(prompt, prod_details)
+            logger.info(f"Generating image using prompt: {optimized_prompt}")
+            
+            response = await self.image_client.images.generate(
+                model="gpt-image-1",
+                prompt=optimized_prompt,
+                size=size_dimension,
+                quality="medium",
+                n=1,
+            )
+            if response.data and len(response.data) > 0:
+                image_b64 = response.data[0].b64_json
+                return base64.b64decode(image_b64)
+        except Exception as e:
+            logger.error(f"Image generation failed: {e}")
+            return None
+        
+
+
+
 # tool instances
+
+
+poster_tool = PosterTool()
 product_resolver = ProductAmbiguityResolver()
 outreach_tool = OutreachTool()
 scheduling_tool = SchedulingTool()

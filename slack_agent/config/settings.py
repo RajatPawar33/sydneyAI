@@ -34,12 +34,9 @@ class Settings(BaseSettings):
     mongodb_uri: str = "mongodb://localhost:27017"
     mongodb_db_name: str = "sydney"
 
-    # mailgun config
-    # mailgun_api_key: Optional[str] = None
-    # mailgun_domain: Optional[str] = None
-    # mailgun_from_email: Optional[str] = None
-    # mailgun_from_name: str = "Sydney Bot"
-    # mailgun_webhook_signing_key: Optional[str] = None
+
+    # twilio config
+    twilio_auth_token: str = ""
 
 # SendGrid config (Replacing Mailgun)
     sendgrid_api_key: Optional[str] = None

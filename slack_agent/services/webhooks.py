@@ -1,10 +1,22 @@
 from datetime import datetime
 from typing import Any, Dict
 
-from fastapi import APIRouter, Header, HTTPException, Request
+from fastapi import APIRouter, Header, HTTPException, Request, Form, Response
 
 from slack_agent.services.database import db_service
 from slack_agent.services.email import mailgun_client
+from fastapi import APIRouter, Query
+from fastapi.responses import RedirectResponse
+from slack_agent.services.database import db_service
+from datetime import datetime
+from typing import List
+import logging
+from datetime import datetime
+from typing import Any, Dict, List
+import logging
+from fastapi.responses import RedirectResponse
+from twilio.request_validator import RequestValidator
+from slack_agent.config.settings import settings
 
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 
@@ -17,12 +29,8 @@ TRACKED_EVENTS = {
     "unsubscribed",
     "complained",
 }
-from fastapi import APIRouter, Query
-from fastapi.responses import RedirectResponse
-from slack_agent.services.database import db_service
-from datetime import datetime
-from typing import List
-import logging
+
+twilio_validator = RequestValidator(settings.twilio_auth_token)
 
 logger = logging.getLogger(__name__)
 
@@ -33,38 +41,49 @@ async def track_campaign_click(
     campaign_id: str = Query(...),
     product_title: str = Query(...),
     product_type: str = Query(""),
-    product_tags: List[str] = Query([]),
-    redirect_url: str = Query(...)
+    product_id: str = Query(...),
+    product_tags: List[str] = Query([])
+    
 ):
-    """
-    Handles outbound tracking clicks forwarded by SendGrid/ngrok.
-    Logs the warm lead and redirects to the temporary destination (Wikipedia).
-    """
     try:
-        # lead_payload = {
-        #     "name": name,
-        #     "email": email,
-        #     "status": "interested",
-        #     "campaign_id": campaign_id,
-        #     "source": "email_click",
-        #     "last_action_at": datetime.utcnow(),
-        #     "interest_metadata": {
-        #         "product_title": product_title,
-        #         "product_type": product_type,
-        #         "product_tags": product_tags
-        #     }
-        # }
-        # await db_service.db.leads.update_one(
-        #     {"email": email},
-        #     {"$set": lead_payload, "$setOnInsert": {"created_at": datetime.utcnow()}},
-        #     upsert=True
-        # )
+        # 1. Process and structure the incoming lead payload
+        lead_payload = {
+            "name": name,
+            "email": email,
+            "status": "interested",
+            "campaign_id": campaign_id,
+            "source": "email_click",
+            "last_action_at": datetime.utcnow(),
+            "product_type": product_type,
+            "tags": product_tags,
+            "interest_metadata": {
+                "product_title": product_title,
+                "product_type": product_type,
+                "product_tags": product_tags
+            }
+        }
+        
+        # 2. Record or update user preferences in your MongoDB leads collection
+        await db_service.db.leads.update_one(
+            {"email": email},
+            {
+                "$set": lead_payload, 
+                "$setOnInsert": {"created_at": datetime.utcnow()} 
+            },
+            upsert=True
+        )
         print(f"Captured email click warm lead: {email}")
     except Exception as e:
         print(f"Error logging click lead: {str(e)}")
 
-    return RedirectResponse(url=redirect_url)
-
+    # 3. Construct the clean Vercel redirect deep-link URL
+    STORE_BASE_URL = "https://sydney-store-eight.vercel.app"
+    clean_redirect_url = f"{STORE_BASE_URL}/#product/{product_id}"
+    
+    print(f"Redirecting safely to clean destination URL: {clean_redirect_url}")
+    return RedirectResponse(url=clean_redirect_url)    
+   
+    
 
 @router.post("/api/leads/website")
 async def track_website_personalization(payload: dict):
@@ -199,6 +218,76 @@ async def _process_event(event_type: str, data: Dict[str, Any]):
                     "$set": {"stats.updated_at": datetime.now()},
                 },
             )
+
+@router.post("/whatsapp")
+async def whatsapp_webhook(
+    request: Request,
+    From: str = Form(...),
+    To: str = Form(...),
+    Body: str = Form(...),
+    MessageSid: str = Form(...)
+):
+    
+    try:
+        # Extract phone number as the unique identifier (e.g., "+14155552671")
+        user_id = From.replace("whatsapp:", "")
+        
+        # Pull the global SlackHandler instance shared via app state
+        slack_handler = getattr(request.app.state, "slack_handler", None)
+        if not slack_handler:
+            twiml_error = (
+                '<?xml version="1.0" encoding="UTF-8"?>'
+                "<Response><Message>Agent service is temporarily offline.</Message></Response>"
+            )
+            return Response(content=twiml_error, media_type="application/xml")
+
+        # Build execution context metadata matching what SlackHandler expects
+        user_info = {
+            "id": user_id,
+            "name": f"WhatsApp User ({user_id})",
+            "username": user_id
+        }
+        channel_info = {
+            "id": "whatsapp-channel",
+            "name": "whatsapp"
+        }
+
+        # 1. Fetch conversation history from MongoDB using the phone number as user_id
+        conv_history = await db_service.get_conversation_history(user_id, limit=5)
+
+        # 2. Forward execution directly into the semantic router and tool dispatcher
+        response_text = await slack_handler._process_command(
+            Body, user_info, channel_info, conv_history
+        )
+
+        # 3. Clean Slack formatting wrappers out of the message context for WhatsApp readability
+        # Strip out Slack's explicit hyperlink markdown (<http://url|label> or <mailto:email|label>)
+        import re
+        response_text = re.sub(r"<(?:mailto:)?([^|>]+)(?:\|[^>]+)?>", r"\1", response_text)
+
+        # 4. Persist transaction history to MongoDB logs
+        await db_service.save_conversation(
+            user_id=user_id,
+            channel_id="whatsapp-channel",
+            message=Body,
+            response=response_text
+        )
+
+        # 5. Build and return TwiML XML response payload
+        twiml_response = (
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            f"<Response><Message>{response_text}</Message></Response>"
+        )
+        return Response(content=twiml_response, media_type="application/xml")
+
+    except Exception as e:
+        logger.error(f"Error handling WhatsApp message webhook: {str(e)}")
+        twiml_fallback = (
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            "<Response><Message>An error occurred processing your request.</Message></Response>"
+        )
+        return Response(content=twiml_fallback, media_type="application/xml")
+
 def _event_to_counter(event_type: str) -> str | None:
     mapping = {
         "delivered": "delivered",
@@ -209,3 +298,49 @@ def _event_to_counter(event_type: str) -> str | None:
         "complained": "spam_reports",
     }
     return mapping.get(event_type)
+
+
+from slack_agent.models.schemas import WebsiteQuizLead  # Import the new schema
+
+@router.post("/api/leads/website")
+async def track_website_personalization(payload: WebsiteQuizLead):
+    """
+    Handles inbound leads from your website's style quiz form.
+    Validates and stores user context into MongoDB for future marketing triggers.
+    """
+    try:
+        # Pydantic automatically validates and safe-parses the properties
+        email = payload.email
+        name = payload.name
+        chosen_tags = payload.tags
+        chosen_type = payload.product_type
+
+        lead_payload = {
+            "name": name,
+            "email": email,
+            "status": "interested",
+            "source": "website_personalization",
+            "last_action_at": datetime.utcnow(),
+            # These matching variables align with campaign segmentations
+            "product_type": chosen_type,
+            "tags": chosen_tags,
+            "interest_metadata": {
+                "product_type": chosen_type,
+                "product_tags": chosen_tags
+            }
+        }
+        
+        # Upsert operation ensures that if an email takes the quiz multiple times,
+        # their profile state and style preferences are refreshed dynamically.
+        await db_service.db.leads.update_one(
+            {"email": email},
+            {
+                "$set": lead_payload, 
+                "$setOnInsert": {"created_at": datetime.utcnow()}
+            },
+            upsert=True
+        )
+        return {"status": "success", "message": "Website quiz lead captured and structured successfully."}
+    except Exception as e:
+        logger.error(f"Error saving quiz lead: {str(e)}")
+        return {"status": "error", "message": "Internal storage failure"}

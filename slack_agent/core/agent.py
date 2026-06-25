@@ -8,7 +8,8 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from slack_agent.config.settings import settings
 from slack_agent.models.schemas import AgentResponse
-
+from openai import AsyncOpenAI
+from slack_agent.config.settings import settings
 
 class AIAgent:
     def __init__(self):
@@ -90,6 +91,10 @@ guidelines:
                 "channel_id": channel_info.get("id"),
             },
         )
+    
+
+
+        
     async def generate_email_content(
         self, campaign_type: str, prod_details: str, topic: str
     ) -> Dict[str, str]:
@@ -103,26 +108,29 @@ guidelines:
 
        # Inside slack_agent/core/agent.py -> generate_email_content
 
-        prompt = f"""You are a conversion-focused email marketer. Generate a promotional email matching these instructions: "{topic}"
+     # Inside slack_agent/core/agent.py -> generate_email_content
 
-Using this raw Shopify JSON product data:
-{prod_details}
+        prompt = f"""You are a luxury conversion-focused email marketer. 
+        Generate a promotional email matching these instructions: "{topic}" 
+        Using this raw Shopify JSON product data: {prod_details} 
+        Campaign Type: {campaign_type}
 
-Campaign Type: {campaign_type}
+        Layout Requirements:
+        - STRUCTURE: Divide the email body copy into 3 distinct sections: 
+        1. An attention-grabbing hook paragraph.
+        2. A benefit-driven feature body paragraph.
+        3. A short, urgent closing call-to-action transition sentence.
+        - FORMAT: Wrap each section in semantic HTML `<p style="line-height: 1.6; margin-bottom: 16px; font-family: sans-serif; color: #333333; font-size: 16px;"></p>` paragraph tags. Do NOT output a single wall of text.
+        - SALUTATION REQUIREMENT: Start the first paragraph exactly with "Hi {{name}}," as a placeholder variable.
 
-Requirements:
-- Parse the JSON data dynamically to pull key marketing hooks (title, product_type, tags, body_html).
-- Align the narrative angle with the user's custom context or instruction provided in the topic.
-- Structure a compelling, professional layout with an obvious problem-solution angle.
-- SALUTATION REQUIREMENT: Start the body copy exactly with "Hi {{name}}," as a placeholder variable. If you don't have a name, just use "Hi there,". This is critical for personalization in the email platform.
-STRICT INSTRUCTION: Return ONLY a valid JSON object matching the schema below. Do not include markdown code blocks (like ```json), explanations, introductory phrases, or trailing text.
+        STRICT INSTRUCTION: Return ONLY a valid JSON object matching the schema below. Do not include markdown code blocks (like ```json), explanations, or notes.
 
-Output Format:
-{{
-  "subject": "Clear, high-open-rate subject line under 60 characters",
-  "body": "Hi {{name}},\n\nThe complete professional body copy with placeholders...",
-  "cta": "Urgent, benefit-driven Call-To-Action text"
-}}"""
+        Output Format:
+        {{
+        "subject": "Clear, high-open-rate subject line under 60 characters",
+        "body": "<p style='...'>Hi {{name}},\\n\\n[Hook content Here]</p><p style='...'>[Benefits here]</p><p style='...'>[Urgency wrapper text]</p>",
+        "cta": "Urgent, benefit-driven Call-To-Action text"
+        }}"""
 
         response = await json_llm.ainvoke([HumanMessage(content=prompt)])
 

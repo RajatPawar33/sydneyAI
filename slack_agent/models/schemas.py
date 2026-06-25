@@ -117,7 +117,13 @@ class OrderRecord(BaseModel):
 
     class Config:
         populate_by_name = True  
-# --- influencer models ---
+
+
+class WebsiteQuizLead(BaseModel):
+    name: str = Field(..., examples=["John Doe"])
+    email: EmailStr
+    product_type: str = Field(..., examples=["Hoodie"])
+    tags: List[str] = Field(default_factory=list, examples=[["Streetwear", "Essential"]])
 
 
 class InfluencerTier(str, Enum):

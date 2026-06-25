@@ -1,4 +1,6 @@
 from datetime import datetime
+import io
+import re
 from typing import Dict
 
 from slack_bolt.async_app import AsyncApp
@@ -19,7 +21,8 @@ from slack_agent.tools.marketing_tools import (
     outreach_tool,
     scheduling_tool,
     social_media_tool,
-    product_resolver
+    product_resolver,
+    poster_tool
 )
 from slack_agent.utils.helpers import (
     clean_slack_text,
@@ -50,7 +53,7 @@ class SlackHandler:
 
     async def handle_mention(self, event: Dict, say, client):
         try:
-            
+        
             user_id = event["user"]
             channel_id = event["channel"]
             text = event["text"]
@@ -109,7 +112,8 @@ class SlackHandler:
 
     async def handle_direct_message(self, message: Dict, say, client):
         try:
-            # only dm's
+         
+           
             if message.get("channel_type") != "im":
                 return
 
@@ -230,6 +234,10 @@ class SlackHandler:
         elif intent == "collection_and_campaign":  
             return await self._handle_collection_and_campaign(text, user_info, params)
         
+        elif intent == "poster_generation":
+            params["channel_id"] = channel_info.get("id") or channel_info.get("channel")
+            return await self._handle_poster_generation(text, user_info, params)
+        
         elif intent == "influencer_campaign":
             return await self._handle_influencer_command(text, user_info, params)
 
@@ -312,41 +320,46 @@ say "generate promotional email for [topic]" to continue"""
         self, text: str, user_info: Dict, params: Dict
     ) -> str:
         try:
-            # Use AI-extracted platforms or default
             platforms = params.get("platforms", ["twitter"])
             is_immediate = params.get("immediate", False)
-
-            # Parse scheduled time if not immediate
+            
             scheduled_at = None
             if not is_immediate:
                 if "scheduled_time" in params and params["scheduled_time"]:
                     scheduled_at = parse_date_from_text(params["scheduled_time"])
                 else:
                     scheduled_at = parse_date_from_text(text)
-
                 if not scheduled_at:
                     return "couldn't parse schedule time, please specify (e.g., 'tomorrow 3pm') or say 'post now'"
 
-            # 1. Resolve product name ambiguity inline using the user's query text
-            
+            # 1. Attempt to resolve product name ambiguity inline using the user's query text
             raw_product_data = await product_resolver.resolve_product(text)
             
+            # --- RETAIN ORIGINAL WORKING + ENABLE FALLBACK ---
             if not raw_product_data:
-                return f"Error: Could not match your query '{text}' to an active product in your Shopify catalog."
+                # If no product matches, do NOT fail. Inject generic schema wrappers.
+                raw_product_data = {
+                    "title": "General Topic",
+                    "product_type": "Discussion Content",
+                    "tags": "General, Marketing",
+                    "body_html": "An educational piece or perspective commentary."
+                }
+                display_title = f"General Content ({text[:30]}...)"
+            else:
+                display_title = raw_product_data.get('title')
 
-            # 2. Serialize the entire raw product dictionary payload to a JSON string.
+            # 2. Serialize the product dictionary payload to a JSON string.
             full_product_details_json = json.dumps(raw_product_data, indent=2)
-
-            # 3. Inject the complete raw details directly into the generation function
+            
+            # 3. Inject the data directly into the generation function
             content = await social_media_tool.generate_post_content(
                 platform=platforms[0],
                 topic=text,
-                prod_details=full_product_details_json,  # Pass all raw product data context here
+                prod_details=full_product_details_json,
                 tone="professional",
             )
-
+            
             from slack_agent.services.social_media_manager import social_media_manager
-
             optimized_content = {}
             for platform in platforms:
                 optimized_content[platform] = (
@@ -354,134 +367,128 @@ say "generate promotional email for [topic]" to continue"""
                         content, platform
                     )
                 )
-
             if is_immediate:
-                # Post now to all platforms
                 results = {}
                 for platform in platforms:
                     result = await scheduling_tool.post_now(
                         platform=platform, content=optimized_content[platform]
                     )
                     results[platform] = result["result"]
-
-                # Format response
-                response_parts = [f"posts published for product '{raw_product_data.get('title')}' ✓\n"]
+                
+                response_parts = [f"posts published for context '{display_title}'  \n"]
                 for platform, result in results.items():
                     if result.get("success"):
-                        response_parts.append(f"✓ {platform}: posted")
+                        response_parts.append(f"  {platform}: posted")
                     else:
                         response_parts.append(
-                            f"✗ {platform}: {result.get('error', 'failed')}"
+                            f"  {platform}: {result.get('error', 'failed')}"
                         )
-
                 response_parts.append(f"\ncontent:\n{content[:200]}...")
                 return "\n".join(response_parts)
-
             else:
-                # Schedule for later
                 await scheduling_tool.post_to_multiple_platforms(
                     platforms=platforms, content=content, scheduled_at=scheduled_at
                 )
-
-                return f"""posts scheduled ✓
-    product: {raw_product_data.get('title')}
-    platforms: {", ".join(platforms)}
-    scheduled: {scheduled_at.strftime("%Y-%m-%d %H:%M")}
-
-    content preview:
-    {content[:200]}...
-
-    post will be published automatically at scheduled time"""
-
+                return f"""posts scheduled
+                    context: {display_title}
+                    platforms: {", ".join(platforms)}
+                    scheduled: {scheduled_at.strftime("%Y-%m-%d %H:%M")}
+                    content preview:
+                    {content[:200]}...
+                    post will be published automatically at scheduled time"""
         except Exception as e:
             return f"error scheduling post: {str(e)}"
+        
     async def _handle_create_campaign(
-        self, text: str, user_info: Dict, params: Dict
-    ) -> str:
-        try:
-            # use ai-extracted topic if available
-            topic = params.get("topic", text)
-            raw_product_data = await product_resolver.resolve_product(text)
-            
-            if not raw_product_data:
-                return f"Error: Could not match your query '{text}' to an active product in your Shopify catalog."
-
-            # 2. Serialize the entire raw product dictionary payload to a JSON string.
-            full_product_details_json = json.dumps(raw_product_data, indent=2)
-
-            campaign_content = await outreach_tool.generate_campaign_content(
-                campaign_type="promotional",
-                topic=topic,
-                prod_details=full_product_details_json
+            self, text: str, user_info: Dict, params: Dict
+        ) -> str:
+            try:
+                topic = params.get("topic", text)
+                raw_product_data = await product_resolver.resolve_product(text)
                 
-            )
-
-            # Check if emails are provided in params (from router)
-            emails = params.get("emails", [])
-
-            if emails:
-                recipients = [
-                    EmailRecipient(email=email, name=email.split("@")[0])
-                    for email in emails
-                ]
-            else:
-                cached = await cache_service.get(f"recipients:{user_info['id']}")
-
-                if not cached:
-                    return f"""📧 *Generated Campaign Preview*
-                    *Subject:* {campaign_content["subject"]}
-                    *Body:* {campaign_content["body"]}
-                    *CTA:* {campaign_content["cta"]}
-
-                    ⚠️ No recipients found. Please provide emails or collect them first."""
+               
+                if not raw_product_data:
+                    # Provide standard structure so prompt parser won't throw exceptions
+                    raw_product_data = {
+                        "title": "General Context",
+                        "product_type": "Newsletter",
+                        "tags": "Informational",
+                        "body_html": "Strategic brand value transmission text."
+                    }
+                    
+                full_product_details_json = json.dumps(raw_product_data, indent=2)
+                campaign_content = await outreach_tool.generate_campaign_content(
+                    campaign_type="promotional",
+                    topic=topic,
+                    prod_details=full_product_details_json
+                )
                 
-                recipients = [EmailRecipient(**r) for r in cached]
-
-            # --- IMPROVED SCHEDULING LOGIC ---
-            scheduled_at = None
-            scheduled_val = params.get("scheduled")
-            
-            # Check if the user specifically requested "now" or immediate send
-            is_immediate = any(word in text.lower() for word in ["now", "immediately", "right away"])
-
-            if not is_immediate:
-                if isinstance(scheduled_val, str) and scheduled_val.strip():
-                    scheduled_at = parse_date_from_text(scheduled_val)
+                emails = params.get("emails", [])
+                if emails:
+                    recipients = [
+                        EmailRecipient(email=email, name=email.split("@")[0])
+                        for email in emails
+                    ]
                 else:
-                    scheduled_at = parse_date_from_text(text)
-            
-            # create campaign
-            campaign_id = await outreach_tool.create_campaign(
-                title=f"campaign_{datetime.now().strftime('%Y%m%d_%H%M')}",
-                recipients=recipients,
-                subject=campaign_content["subject"],
-                body=campaign_content["body"],
-                scheduled_at=scheduled_at,
-            )
+                    cached = await cache_service.get(f"recipients:{user_info['id']}")
+                    if not cached:
+                        return f"""  *Generated Campaign Preview*
+                        *Subject:* {campaign_content["subject"]}
+                        *Body:* {campaign_content["body"]}
+                        *CTA:* {campaign_content["cta"]}
+                        No recipients found. Please provide emails or collect them first."""
+                                    
+                    recipients = [EmailRecipient(**r) for r in cached]
 
-            if scheduled_at:
-                status = "scheduled"
-                time_info = f"scheduled: {scheduled_at.strftime('%Y-%m-%d %H:%M')}"
-            else:
-                # If scheduled_at is None, tool should send immediately
-                status = "sent"
-                time_info = "sent: immediately"
+                scheduled_at = None
+                scheduled_val = params.get("scheduled")
+                is_immediate = any(word in text.lower() for word in ["now", "immediately", "right away"])
+                if not is_immediate:
+                    if isinstance(scheduled_val, str) and scheduled_val.strip():
+                        scheduled_at = parse_date_from_text(scheduled_val)
+                    else:
+                        scheduled_at = parse_date_from_text(text)
+                            
+                campaign_id = await outreach_tool.create_campaign(
+                    title=f"campaign_{datetime.now().strftime('%Y%m%d_%H%M')}",
+                    recipients=recipients,
+                    subject=campaign_content["subject"],
+                    body=campaign_content["body"],
+                    scheduled_at=scheduled_at,
+                    product_info=raw_product_data  
+                )
+                if scheduled_at:
+                    status = "scheduled"
+                    time_info = f"scheduled: {scheduled_at.strftime('%Y-%m-%d %H:%M')}"
+                else:
+                    status = "sent"
+                    time_info = "sent: immediately"
+                return f"""
+                    🚀 *Campaign Created Successfully!*
+                    __________________________________________________
 
-            return f"""campaign created ✓
-campaign id: {campaign_id}
-recipients: {(recipients)}
-status: {status}
-{time_info}
+                    🔹 *Campaign Details*
+                    • *ID:* `{campaign_id}`
+                    • *Status:*  `{status.upper()}` ({time_info})
+                    • *Audience:* `{len(recipients)}` recipient(s) targeted
 
-subject: {campaign_content["subject"]}
+                    📧 *Marketing Copy Summary*
+                    • *Subject:* *"{campaign_content['subject']}"*
 
-reply "preview" to see full email content"""
+                    • *Body Preview:*
+                    "{campaign_content['body'][:300]}..."
+                    
+                    """
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                return f"error creating campaign: {str(e)}"
 
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
-            return f"error creating campaign: {str(e)}"
-   
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                return f"error creating campaign: {str(e)}"
+    
     async def _handle_collection_and_campaign(
         self, text: str, user_info: Dict, params: Dict
     ) -> str:
@@ -729,6 +736,88 @@ Found {len(recipients)} matching customer profiles:
             import traceback
             traceback.print_exc()
             return f"Error executing filtered audience email collection: {str(e)}"  
+        
+
+
+    async def _handle_poster_generation(
+            self, text: str, user_info: Dict, params: Dict
+        ) -> str:
+            try:
+                product_name = params.get("product_name", "")
+                prompt = params.get("prompt", text)
+                aspect_ratio = params.get("aspect_ratio", "square")
+
+                # 1. Gather product context from Shopify via the product_resolver tool
+                product_details_json = "{}"
+                resolved_product_title = "General Marketing Graphic"
+                
+                if product_name and product_name.strip():
+                    raw_product_data = await product_resolver.resolve_product(product_name)
+                    if not raw_product_data:
+                        return f"Error: Could not match product lookup request '{product_name}' to an active item in your Shopify inventory."
+                    
+                    resolved_product_title = raw_product_data.get("title", product_name)
+                    product_details_json = json.dumps(raw_product_data, indent=2)
+                else:
+                    raw_product_data = await product_resolver.resolve_product(text)
+                    if raw_product_data:
+                        resolved_product_title = raw_product_data.get("title")
+                        product_details_json = json.dumps(raw_product_data, indent=2)
+
+                 
+                
+                image_bytes = await poster_tool.generate_poster(
+                prompt=prompt,
+                aspect_ratio=aspect_ratio,
+                prod_details=product_details_json
+                    )
+
+                if not image_bytes:
+                    return (
+                        "Failed to generate your poster design. "
+                            "Please try adjusting your description."
+                    )
+
+                channel_id = params.get("channel_id")
+
+                if not channel_id:
+                    return (
+                        "Poster generated successfully, but no channel_id "
+                        "was provided for Slack upload."
+                    )
+
+                filename = f"poster_{resolved_product_title.lower().replace(' ', '_')}.png"
+                print("TYPE:", type(image_bytes))
+                file_obj = io.BytesIO(image_bytes)
+                file_obj.name = filename
+
+                              
+                initial_comment = f"*Visual Content Generation Complete ✓*\n*Target Product:* {resolved_product_title}\n*Layout Ratio:* {aspect_ratio}\n*Prompt Used:* _{prompt}_\n\n_If you want to publish this poster, say 'schedule post on instagram/twitter with this image now'_"
+
+
+                await self.app.client.files_upload_v2(
+                    channel=channel_id,
+                    file=file_obj,
+                    filename=filename,
+                    title=f"Generated Poster for {resolved_product_title}",
+                    initial_comment=initial_comment,
+                )
+
+               
+                return "Poster generated "
+
+            except Exception as e:
+                import traceback
+
+                traceback.print_exc()
+
+                return (
+                    f"Error executing creative poster generation: "
+                    f"{str(e)}"
+                )
+                
+
+
     async def _handle_influencer_command(
         self, text: str, user_info: Dict, params: Dict
     ) -> str:

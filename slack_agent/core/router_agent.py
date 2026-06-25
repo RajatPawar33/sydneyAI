@@ -26,6 +26,7 @@ IntentType = Literal[
     "list_products",
     "influencer_campaign",
     "general_chat",
+    "poster_generation",
 ]
 
 
@@ -59,11 +60,14 @@ class CreateCampaignParams(BaseModel):
     topic: str = ""
     scheduled: Union[str, bool] = ""
     emails: list[str] = []
-
-class InfluencerCampaignParams(BaseModel):
+    
+class PosterGenerationParams(BaseModel):
     product_name: str = ""
-    budget: str = "500"
-    platforms: list[str] = ["youtube", "instagram"]
+    prompt: str = ""
+    aspect_ratio: Literal["square", "landscape", "portrait"] = "portrait"
+
+class LeadsCampaignParams(BaseModel):
+    campaign_id: str
 
 class ListProductsParams(BaseModel):
     limit: int = 250
@@ -185,6 +189,17 @@ available intents:
        "topic": "full text instruction for writing the copy"
    }}
 
+10. poster_generation - user wants to generate, design, or create a visual poster, advertisement banner, or social media image.
+    logic: use this when the user explicitly requests to create or generate visual image content, marketing posters, or promotional graphics. If the user mentions a specific product name to design the poster for, extract it into 'product_name'.
+    examples:
+      - "generate a promotional poster for our Altitude Puffer Jacket" -> {{"product_name": "Altitude Puffer Jacket", "prompt": "promotional poster for Altitude Puffer Jacket", "aspect_ratio": "square"}}
+      - "create an advertising banner with a sleek modern design for Slim-Fit Jeans" -> {{"product_name": "Slim-Fit Jeans", "prompt": "advertising banner with a sleek modern design for Slim-Fit Jeans", "aspect_ratio": "landscape"}}
+    params: {{
+        "product_name": "extracted product name string or empty", 
+        "prompt": "description of the visual layout or theme", 
+        "aspect_ratio": "square|landscape|portrait"
+    }}
+
 9. general_chat - casual conversation, help requests, or general marketing consultation.
    logic: use this for greetings or when the user asks for strategic advice, industry trends, marketing roadmaps, or brainstorming topics that do not involve immediate execution.
    examples: 
@@ -230,6 +245,7 @@ analyze and classify the intent with extracted parameters."""
             "create_campaign": CreateCampaignParams,
             "collection_and_campaign": CollectionAndCampaignParams,  
             "influencer_campaign": InfluencerCampaignParams,
+            "poster_generation": PosterGenerationParams,
         }
 
     
